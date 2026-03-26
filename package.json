@@ -1,0 +1,90 @@
+{
+  "name": "lockick",
+  "displayName": "LocKick",
+  "description": "The minimalist VS Code client for local LLMs.",
+  "version": "0.1.0",
+  "publisher": "maxgf",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Machine Learning",
+    "Programming Languages"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "lockick-explorer",
+          "title": "LocKick",
+          "icon": "resources/logo.svg"
+        }
+      ]
+    },
+    "views": {
+      "lockick-explorer": [
+        {
+          "type": "webview",
+          "id": "lockick.chatView",
+          "name": "Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "lockick.askAboutSelection",
+        "title": "LocKick: Ask About Selection"
+      },
+      {
+        "command": "lockick.testConnection",
+        "title": "LocKick: Test Connection"
+      }
+    ],
+    "configuration": {
+      "title": "LocKick",
+      "properties": {
+        "lockick.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:1234/v1",
+          "description": "LM Studio / OpenAI-compatible server URL."
+        },
+        "lockick.apiKey": {
+          "type": "string",
+          "default": "lm-studio",
+          "description": "API key (optional for local models)."
+        },
+        "lockick.modelName": {
+          "type": "string",
+          "default": "default",
+          "description": "Name of the model to use."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0",
+    "@types/glob": "^8.1.0",
+    "@types/mocha": "^10.0.6",
+    "@types/node": "20.x",
+    "@typescript-eslint/eslint-plugin": "^7.14.1",
+    "@typescript-eslint/parser": "^7.14.1",
+    "eslint": "^8.57.0",
+    "glob": "^10.4.1",
+    "mocha": "^10.4.0",
+    "typescript": "^5.4.5",
+    "@vscode/test-electron": "^2.4.0"
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  }
+}
