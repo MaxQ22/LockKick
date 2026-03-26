@@ -152,11 +152,16 @@ async function toolProposeEdit(root: string, args: ProposeEditArgs, confirm?: Co
         () => {}, () => {} // ignore errors deleting temp file
     );
 
+    closeRecentDiffs(uri);
+
     if (!accepted) {
+        // Revert view to original file content
+        await vscode.window.showTextDocument(uri);
         return { tool: 'propose_edit', success: false, error: 'User rejected the proposed edit.' };
     }
 
     await vscode.workspace.fs.writeFile(uri, encoder.encode(args.content));
+    await vscode.window.showTextDocument(uri);
     return { tool: 'propose_edit', success: true, data: `File "${args.path}" updated successfully.` };
 }
 
@@ -179,26 +184,43 @@ async function toolCreateFile(root: string, args: CreateFileArgs, confirm?: Conf
         };
     }
 
+    // Create a temporary empty file to diff against
+    const emptyUri = uri.with({ path: uri.path + '.lockick-empty' });
+    const tempUri  = uri.with({ path: uri.path + '.lockick-proposed' });
+    const encoder  = new TextEncoder();
+    
+    await vscode.workspace.fs.writeFile(emptyUri, encoder.encode(''));
+    await vscode.workspace.fs.writeFile(tempUri,  encoder.encode(args.content));
+
+    const label = args.description ?? `LocKick: Create ${path.basename(args.path)}`;
+    await vscode.commands.executeCommand('vscode.diff', emptyUri, tempUri, label);
+
     let accepted: boolean;
     if (confirm) {
         accepted = await confirm({
             title: `Create: ${path.relative(root, absPath)}`,
-            body: args.description ?? 'Create this new file in the workspace?',
+            body: args.description ?? 'Create this new file with the content shown in the diff?',
         });
     } else {
-        const desc = args.description ? ` — ${args.description}` : '';
         const choice = await vscode.window.showWarningMessage(
-            `LocKick Agent wants to create "${path.relative(root, absPath)}"${desc}.`,
+            `LocKick Agent wants to create "${path.relative(root, absPath)}".`,
             { modal: true }, 'Create', 'Cancel'
         );
         accepted = choice === 'Create';
     }
 
+    // Cleanup
+    await Promise.all([
+        vscode.workspace.fs.delete(emptyUri, { useTrash: false }).then(() => {}, () => {}),
+        vscode.workspace.fs.delete(tempUri,  { useTrash: false }).then(() => {}, () => {}),
+    ]);
+
+    closeRecentDiffs(uri);
+
     if (!accepted) {
         return { tool: 'create_file', success: false, error: 'User cancelled file creation.' };
     }
 
-    const encoder = new TextEncoder();
     await vscode.workspace.fs.writeFile(uri, encoder.encode(args.content));
     await vscode.window.showTextDocument(uri);
 
@@ -216,21 +238,35 @@ async function toolDeleteFile(root: string, args: DeleteFileArgs, confirm?: Conf
         return { tool: 'delete_file', success: false, error: `File not found: "${args.path}"` };
     }
 
+    // Create a temporary empty file to diff against (showing deletion)
+    const emptyUri = uri.with({ path: uri.path + '.lockick-empty' });
+    const encoder  = new TextEncoder();
+    await vscode.workspace.fs.writeFile(emptyUri, encoder.encode(''));
+
+    const label = `LocKick: Delete ${path.basename(args.path)} (Proposed)`;
+    await vscode.commands.executeCommand('vscode.diff', uri, emptyUri, label);
+
     let accepted: boolean;
     if (confirm) {
         accepted = await confirm({
             title: `Delete: ${path.relative(root, absPath)}`,
-            body: 'This will move the file to the trash.',
+            body: 'Are you sure you want to delete this file? (View the "deletion diff" to confirm contents).',
         });
     } else {
         const choice = await vscode.window.showWarningMessage(
-            `LocKick Agent wants to DELETE "${path.relative(root, absPath)}". This will move it to the trash.`,
+            `LocKick Agent wants to DELETE "${path.relative(root, absPath)}".`,
             { modal: true }, 'Delete', 'Cancel'
         );
         accepted = choice === 'Delete';
     }
 
+    // Cleanup
+    await vscode.workspace.fs.delete(emptyUri, { useTrash: false }).then(() => {}, () => {});
+    closeRecentDiffs(uri);
+
     if (!accepted) {
+        // "Revert" view by showing the original file again
+        await vscode.window.showTextDocument(uri);
         return { tool: 'delete_file', success: false, error: 'User cancelled file deletion.' };
     }
 
@@ -283,4 +319,25 @@ async function toolRunSearch(root: string, args: RunSearchArgs): Promise<ToolRes
         success: true,
         data: `Found matches for "${args.query}":\n${hits.join('\n')}${suffix}`,
     };
+}
+
+/**
+ * Attempts to close any diff tabs related to a file we were just previewing.
+ * This helps "revert" the UI state after a user confirms or rejects a change.
+ */
+function closeRecentDiffs(fileUri: vscode.Uri) {
+    const targetPath = fileUri.fsPath;
+    
+    for (const group of vscode.window.tabGroups.all) {
+        for (const tab of group.tabs) {
+            if (tab.input instanceof vscode.TabInputTextDiff) {
+                const isMatch = tab.input.original.fsPath.startsWith(targetPath) || 
+                               tab.input.modified.fsPath.startsWith(targetPath);
+                
+                if (isMatch) {
+                    vscode.window.tabGroups.close(tab).then(() => {}, () => {});
+                }
+            }
+        }
+    }
 }
