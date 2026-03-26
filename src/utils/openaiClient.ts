@@ -1,48 +1,109 @@
-import fetch from 'node-fetch';
-import * as vscode from 'vscode';
+/**
+ * OpenAI-compatible API client for LM Studio and similar local servers.
+ * Uses the built-in Node.js fetch (available in Node 18+ / VS Code 1.85+).
+ */
+export interface ConnectionConfig {
+    serverUrl: string;
+    apiKey: string;
+    modelName: string;
+}
+
+export interface ModelInfo {
+    id: string;
+    object: string;
+    owned_by?: string;
+}
+
+export interface TestConnectionResult {
+    success: boolean;
+    message: string;
+    models?: ModelInfo[];
+}
 
 export class OpenAIClient {
-    private url: string;
-    private apiKey: string;
-    private model: string;
+    private config: ConnectionConfig;
 
-    constructor() {
-        const config = vscode.workspace.getConfiguration('lockick');
-        this.url = config.get<string>('serverUrl') || 'http://localhost:1234/v1';
-        this.apiKey = config.get<string>('apiKey') || 'lm-studio';
-        this.model = config.get<string>('modelName') || 'default';
+    constructor(config: ConnectionConfig) {
+        this.config = config;
     }
 
-    async chat(messages: { role: string; content: string }[]): Promise<string> {
+    /**
+     * Tests the connection by hitting the /models endpoint.
+     * Returns a result object with success status, message, and available models.
+     */
+    async testConnection(): Promise<TestConnectionResult> {
+        const url = this.config.serverUrl.replace(/\/+$/, '');
+
         try {
-            const response = await fetch(`${this.url}/chat/completions`, {
-                method: 'POST',
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 8000);
+
+            const response = await fetch(`${url}/models`, {
+                method: 'GET',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${this.apiKey}`
+                    'Authorization': `Bearer ${this.config.apiKey}`,
+                    'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({
-                    model: this.model,
-                    messages: messages,
-                    temperature: 0.7
-                })
+                signal: controller.signal
             });
+
+            clearTimeout(timeout);
 
             if (!response.ok) {
                 const errorText = await response.text();
-                throw new Error(`OpenAI API Error: ${response.status} - ${errorText}`);
+                return {
+                    success: false,
+                    message: `Server responded with ${response.status}: ${errorText}`
+                };
             }
 
             const data: any = await response.json();
-            return data.choices[0].message.content;
-        } catch (error) {
-            console.error('LocKick OpenAI Client Error:', error);
-            throw error;
+            const models: ModelInfo[] = data.data || [];
+
+            return {
+                success: true,
+                message: `Connected successfully! Found ${models.length} model(s).`,
+                models
+            };
+        } catch (error: any) {
+            if (error.name === 'AbortError') {
+                return {
+                    success: false,
+                    message: `Connection timed out after 8 seconds. Is the server running at ${url}?`
+                };
+            }
+            return {
+                success: false,
+                message: `Connection failed: ${error.message}`
+            };
         }
     }
 
-    // Placeholder for streaming support
-    async chatStream(messages: { role: string; content: string }[], callback: (content: string) => void): Promise<void> {
-         // To be implemented in later Phase 1 steps
+    /**
+     * Sends a chat completion request (non-streaming).
+     */
+    async chat(messages: { role: string; content: string }[]): Promise<string> {
+        const url = this.config.serverUrl.replace(/\/+$/, '');
+
+        const response = await fetch(`${url}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${this.config.apiKey}`
+            },
+            body: JSON.stringify({
+                model: this.config.modelName,
+                messages,
+                temperature: 0.7
+            })
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`API Error ${response.status}: ${errorText}`);
+        }
+
+        const data: any = await response.json();
+        return data.choices[0].message.content;
     }
 }
