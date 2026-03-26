@@ -21,6 +21,13 @@
           "title": "LocKick",
           "icon": "resources/icon.png"
         }
+      ],
+      "panel": [
+        {
+          "id": "lockick-panel",
+          "title": "LocKick",
+          "icon": "resources/icon.png"
+        }
       ]
     },
     "views": {
@@ -29,6 +36,14 @@
           "type": "webview",
           "id": "lockick.chatView",
           "name": "Chat",
+          "icon": "resources/icon.png"
+        }
+      ],
+      "lockick-panel": [
+        {
+          "type": "webview",
+          "id": "lockick.agentLog",
+          "name": "Agent Log",
           "icon": "resources/icon.png"
         }
       ]
@@ -41,6 +56,10 @@
       {
         "command": "lockick.testConnection",
         "title": "LocKick: Test Connection"
+      },
+      {
+        "command": "lockick.openAgentLog",
+        "title": "LocKick: Open Agent Log"
       }
     ],
     "configuration": {

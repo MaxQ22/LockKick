@@ -82,7 +82,7 @@ export class OpenAIClient {
     /**
      * Sends a chat completion request (non-streaming).
      */
-    async chat(messages: { role: string; content: string }[]): Promise<string> {
+    async chat(messages: { role: string; content: string }[], signal?: AbortSignal): Promise<string> {
         const url = this.config.serverUrl.replace(/\/+$/, '');
 
         const response = await fetch(`${url}/chat/completions`, {
@@ -95,7 +95,8 @@ export class OpenAIClient {
                 model: this.config.modelName,
                 messages,
                 temperature: 0.7
-            })
+            }),
+            signal,
         });
 
         if (!response.ok) {

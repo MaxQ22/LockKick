@@ -1,24 +1,42 @@
+/**
+ * LocKick Extension Entry Point
+ *
+ * Registers all WebView providers and commands.
+ */
+
 import * as vscode from 'vscode';
 import { ChatViewProvider } from './providers/chatViewProvider.js';
+import { AgentLogProvider } from './providers/agentLogProvider.js';
 
-export function activate(context: vscode.ExtensionContext) {
-    console.log('LocKick is now active.');
-
-    const chatProvider = new ChatViewProvider(context.extensionUri);
+export function activate(context: vscode.ExtensionContext): void {
+    const agentLog  = new AgentLogProvider();
+    const chatPanel = new ChatViewProvider(context.extensionUri, agentLog);
 
     context.subscriptions.push(
+        // ── Webview Providers ────────────────────────────────────────────────
         vscode.window.registerWebviewViewProvider(
             ChatViewProvider.viewType,
-            chatProvider
+            chatPanel,
+            { webviewOptions: { retainContextWhenHidden: true } }
         ),
-        vscode.commands.registerCommand('lockick.testConnection', () => {
-            // Handled inside the webview settings panel
-            vscode.commands.executeCommand('lockick.chatView.focus');
-        }),
+        vscode.window.registerWebviewViewProvider(
+            AgentLogProvider.viewType,
+            agentLog,
+        ),
+
+        // ── Commands ─────────────────────────────────────────────────────────
         vscode.commands.registerCommand('lockick.askAboutSelection', () => {
-            chatProvider.sendAskAboutSelection();
-        })
+            chatPanel.sendAskAboutSelection();
+        }),
+
+        vscode.commands.registerCommand('lockick.testConnection', () => {
+            vscode.commands.executeCommand(`${ChatViewProvider.viewType}.focus`);
+        }),
+
+        vscode.commands.registerCommand('lockick.openAgentLog', () => {
+            vscode.commands.executeCommand(`${AgentLogProvider.viewType}.focus`);
+        }),
     );
 }
 
-export function deactivate() {}
+export function deactivate(): void {}
