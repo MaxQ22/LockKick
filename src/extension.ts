@@ -12,12 +12,11 @@ export function activate(context: vscode.ExtensionContext) {
             chatProvider
         ),
         vscode.commands.registerCommand('lockick.testConnection', () => {
-            const config = vscode.workspace.getConfiguration('lockick');
-            const url = config.get<string>('serverUrl');
-            vscode.window.showInformationMessage(`LocKick: Testing connection to: ${url}`);
+            // Handled inside the webview settings panel
+            vscode.commands.executeCommand('lockick.chatView.focus');
         }),
         vscode.commands.registerCommand('lockick.askAboutSelection', () => {
-            vscode.window.showInformationMessage('LocKick: Asking about selection...');
+            chatProvider.sendAskAboutSelection();
         })
     );
 }

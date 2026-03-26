@@ -106,4 +106,67 @@ export class OpenAIClient {
         const data: any = await response.json();
         return data.choices[0].message.content;
     }
+
+    /**
+     * Streams a chat completion request.
+     * Calls onChunk with each new text delta as it arrives.
+     * Returns the full assembled response when done.
+     */
+    async chatStream(
+        messages: { role: string; content: string }[],
+        onChunk: (delta: string) => void,
+        signal?: AbortSignal
+    ): Promise<string> {
+        const url = this.config.serverUrl.replace(/\/+$/, '');
+
+        const response = await fetch(`${url}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${this.config.apiKey}`
+            },
+            body: JSON.stringify({
+                model: this.config.modelName,
+                messages,
+                temperature: 0.7,
+                stream: true
+            }),
+            signal
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`API Error ${response.status}: ${errorText}`);
+        }
+        if (!response.body) {
+            throw new Error('No response body returned from server.');
+        }
+
+        const decoder = new TextDecoder('utf-8');
+        let fullContent = '';
+        let buffer = '';
+
+        for await (const chunk of response.body as any) {
+            buffer += decoder.decode(chunk, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() ?? '';
+
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed.startsWith('data: ')) { continue; }
+                const dataStr = trimmed.slice(6);
+                if (dataStr === '[DONE]') { return fullContent; }
+                try {
+                    const parsed = JSON.parse(dataStr);
+                    const delta = parsed.choices?.[0]?.delta?.content;
+                    if (delta) {
+                        fullContent += delta;
+                        onChunk(delta);
+                    }
+                } catch { /* ignore partial JSON */ }
+            }
+        }
+
+        return fullContent;
+    }
 }

@@ -12,9 +12,6 @@
     "Machine Learning",
     "Programming Languages"
   ],
-  "activationEvents": [
-    "onView:lockick.chatView"
-  ],
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
