@@ -4,6 +4,8 @@ import { OpenAIClient, ConnectionConfig } from '../utils/openaiClient.js';
 export class LocKickInlineCompletionProvider implements vscode.InlineCompletionItemProvider {
     private debounceTimer: NodeJS.Timeout | undefined;
 
+    constructor(private readonly secretStorage: vscode.SecretStorage) {}
+
     public async provideInlineCompletionItems(
         document: vscode.TextDocument,
         position: vscode.Position,
@@ -56,9 +58,14 @@ export class LocKickInlineCompletionProvider implements vscode.InlineCompletionI
 
         const prompt = `File: ${document.fileName}\nLanguage: ${document.languageId}\n\nCode before cursor:\n\`\`\`${document.languageId}\n${prefix}\n\`\`\`\n\nCode after cursor:\n\`\`\`${document.languageId}\n${suffix}\n\`\`\`\n\nProvide ONLY the exact code to be inserted at the cursor position. Do not provide explanations or repeat code.`;
 
+        let apiKey = await this.secretStorage.get('lockick.apiKey');
+        if (!apiKey) {
+            apiKey = 'lm-studio';
+        }
+
         const connectionConfig: ConnectionConfig = {
             serverUrl: workspaceConfig.get<string>('serverUrl') || 'http://localhost:1234/v1',
-            apiKey: workspaceConfig.get<string>('apiKey') || 'lm-studio',
+            apiKey: apiKey,
             modelName: workspaceConfig.get<string>('modelName') || 'default',
         };
 

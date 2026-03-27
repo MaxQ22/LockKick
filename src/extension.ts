@@ -11,8 +11,8 @@ import { LocKickInlineCompletionProvider } from './providers/inlineCompletionPro
 
 export function activate(context: vscode.ExtensionContext): void {
     const agentLog  = new AgentLogProvider();
-    const chatPanel = new ChatViewProvider(context.extensionUri, agentLog);
-    const inlineProvider = new LocKickInlineCompletionProvider();
+    const chatPanel = new ChatViewProvider(context.extensionUri, agentLog, context.secrets);
+    const inlineProvider = new LocKickInlineCompletionProvider(context.secrets);
 
     context.subscriptions.push(
         // ── Providers ────────────────────────────────────────────────────────

@@ -31,6 +31,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     constructor(
         private readonly _extensionUri: vscode.Uri,
         private readonly _agentLog: AgentLogProvider,
+        private readonly _secretStorage: vscode.SecretStorage,
     ) {}
 
     public resolveWebviewView(
@@ -44,7 +45,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         webviewView.webview.onDidReceiveMessage(async (msg) => {
             switch (msg.command) {
-                case 'loadSettings':      this._sendCurrentSettings(); break;
+                case 'loadSettings':      await this._sendCurrentSettings(); break;
                 case 'saveSettings':      await this._saveSettings(msg.data); break;
                 case 'testConnection':    await this._testConnection(msg.data); break;
                 case 'sendMessage':       await this._handleSend(msg.text); break;
@@ -66,20 +67,26 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     // ─── Config ──────────────────────────────────────────────────────────────
 
-    private _getConfig(): ConnectionConfig {
+    private async _getConfig(): Promise<ConnectionConfig> {
         const cfg = vscode.workspace.getConfiguration('lockick');
+        let apiKey = await this._secretStorage.get('lockick.apiKey');
+        if (!apiKey) {
+            apiKey = 'lm-studio';
+        }
+
         return {
             serverUrl: cfg.get<string>('serverUrl') || 'http://localhost:1234/v1',
-            apiKey:    cfg.get<string>('apiKey')    || 'lm-studio',
+            apiKey:    apiKey,
             modelName: cfg.get<string>('modelName') || 'default',
         };
     }
 
     // ─── Settings ────────────────────────────────────────────────────────────
 
-    private _sendCurrentSettings(): void {
+    private async _sendCurrentSettings(): Promise<void> {
         const inlineConfig = vscode.workspace.getConfiguration('lockick').get<boolean>('inlineCompletionsEnabled', false);
-        this._post({ command: 'currentSettings', data: this._getConfig(), inlineCompletionsEnabled: inlineConfig });
+        const config = await this._getConfig();
+        this._post({ command: 'currentSettings', data: config, inlineCompletionsEnabled: inlineConfig });
     }
 
     private async _toggleInlineCompletions(enabled: boolean): Promise<void> {
@@ -91,8 +98,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private async _saveSettings(data: ConnectionConfig): Promise<void> {
         const cfg = vscode.workspace.getConfiguration('lockick');
         await cfg.update('serverUrl', data.serverUrl, vscode.ConfigurationTarget.Global);
-        await cfg.update('apiKey',    data.apiKey,    vscode.ConfigurationTarget.Global);
         await cfg.update('modelName', data.modelName, vscode.ConfigurationTarget.Global);
+        await this._secretStorage.store('lockick.apiKey', data.apiKey || 'lm-studio');
         this._post({ command: 'settingsSaved' });
     }
 
@@ -149,7 +156,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this._post({ command: 'streamStart' });
 
         this._abortController = new AbortController();
-        const client = new OpenAIClient(this._getConfig());
+        const client = new OpenAIClient(await this._getConfig());
         let assembled = '';
 
         try {
@@ -180,7 +187,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this._abortController = new AbortController();
 
         await runAgent({
-            config:      this._getConfig(),
+            config:      await this._getConfig(),
             userMessage: userText,
             history:     this._agentHistory,
             signal:      this._abortController.signal,
