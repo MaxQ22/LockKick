@@ -70,11 +70,6 @@
           "default": "http://localhost:1234/v1",
           "description": "LM Studio / OpenAI-compatible server URL."
         },
-        "lockick.apiKey": {
-          "type": "string",
-          "default": "lm-studio",
-          "description": "API key (optional for local models)."
-        },
         "lockick.modelName": {
           "type": "string",
           "default": "default",

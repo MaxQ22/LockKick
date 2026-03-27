@@ -20,6 +20,7 @@ LocKick is designed as a privacy-respecting coding assistant that relies entirel
 *   **Agent Mode**: A tool-augmented operational mode where the AI can read workspace files and propose code edits. To ensure security and user control, proposed changes open in a native VS Code Diff view, requiring explicit approval before saving, deleting or creating files.
 *   **Inline Auto-complete**: Real-time code suggestions rendered inline as you type. This feature can be toggled directly from the chat toolbar to conserve local resources when not needed.
 *   **Minimal Configuration/Secure Secrets**: Configure the local server URL, model name, and API key effortlessly via the built-in UI. General settings are saved natively to your VS Code `settings.json`, while your **API key is securely encrypted** using VS Code's SecretStorage API (backed by Windows Credential Manager, macOS Keychain, or Linux libsecret), keeping your sensitive credentials absolutely secure from accidental leaks or syncs.
+*   **Window Position**: As any other VSCode extension, the LocKick panel open on the left side by standard. To move it to the right side, right click on the LocKick title bar and select "Move primary side bar right.
 
 ### Getting Started
 

@@ -1,3 +1,20 @@
+/*
+ * Copyright (C) 2026 Max Fend
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 /**
  * Agent Log Provider
  *
@@ -13,134 +30,134 @@ import { ToolCall, ToolResult } from '../agent/agentProtocol.js';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type LogEntryKind =
-    | 'user-task'
-    | 'reasoning'
-    | 'tool-call'
-    | 'tool-result-ok'
-    | 'tool-result-err'
-    | 'final-answer'
-    | 'error'
-    | 'info';
+  | 'user-task'
+  | 'reasoning'
+  | 'tool-call'
+  | 'tool-result-ok'
+  | 'tool-result-err'
+  | 'final-answer'
+  | 'error'
+  | 'info';
 
 export interface LogEntry {
-    kind: LogEntryKind;
-    timestamp: Date;
-    title: string;
-    body?: string;
+  kind: LogEntryKind;
+  timestamp: Date;
+  title: string;
+  body?: string;
 }
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
 export class AgentLogProvider implements vscode.WebviewViewProvider {
-    public static readonly viewType = 'lockick.agentLog';
+  public static readonly viewType = 'lockick.agentLog';
 
-    private _view?: vscode.WebviewView;
-    private _log: LogEntry[] = [];
+  private _view?: vscode.WebviewView;
+  private _log: LogEntry[] = [];
 
-    public resolveWebviewView(
-        webviewView: vscode.WebviewView,
-        _context: vscode.WebviewViewResolveContext,
-        _token: vscode.CancellationToken
-    ): void {
-        this._view = webviewView;
-        webviewView.webview.options = { enableScripts: true };
-        webviewView.webview.html = buildLogHtml();
+  public resolveWebviewView(
+    webviewView: vscode.WebviewView,
+    _context: vscode.WebviewViewResolveContext,
+    _token: vscode.CancellationToken
+  ): void {
+    this._view = webviewView;
+    webviewView.webview.options = { enableScripts: true };
+    webviewView.webview.html = buildLogHtml();
 
-        webviewView.webview.onDidReceiveMessage((msg) => {
-            if (msg.command === 'clearLog') {
-                this._log = [];
-                this._post({ command: 'cleared' });
-            }
-        });
+    webviewView.webview.onDidReceiveMessage((msg) => {
+      if (msg.command === 'clearLog') {
+        this._log = [];
+        this._post({ command: 'cleared' });
+      }
+    });
 
-        // Replay existing log entries when the panel is first opened
-        for (const entry of this._log) {
-            this._postEntry(entry);
-        }
+    // Replay existing log entries when the panel is first opened
+    for (const entry of this._log) {
+      this._postEntry(entry);
     }
+  }
 
-    // ─── Public Logging API ─────────────────────────────────────────────────
+  // ─── Public Logging API ─────────────────────────────────────────────────
 
-    public logUserTask(task: string): void {
-        this._addEntry({ kind: 'user-task', title: 'Task', body: task });
+  public logUserTask(task: string): void {
+    this._addEntry({ kind: 'user-task', title: 'Task', body: task });
+  }
+
+  public logReasoning(text: string): void {
+    if (text.trim()) {
+      this._addEntry({ kind: 'reasoning', title: 'Agent Reasoning', body: text });
     }
+  }
 
-    public logReasoning(text: string): void {
-        if (text.trim()) {
-            this._addEntry({ kind: 'reasoning', title: 'Agent Reasoning', body: text });
-        }
-    }
+  public logToolCall(call: ToolCall): void {
+    const argsStr = JSON.stringify(call.args, null, 2);
+    this._addEntry({ kind: 'tool-call', title: call.tool, body: argsStr });
+  }
 
-    public logToolCall(call: ToolCall): void {
-        const argsStr = JSON.stringify(call.args, null, 2);
-        this._addEntry({ kind: 'tool-call', title: call.tool, body: argsStr });
-    }
+  public logToolResult(result: ToolResult): void {
+    const kind = result.success ? 'tool-result-ok' : 'tool-result-err';
+    const body = result.data ?? result.error ?? '';
+    const title = result.success ? ' Result' : ' Failed';
+    this._addEntry({ kind, title: result.tool + title, body });
+  }
 
-    public logToolResult(result: ToolResult): void {
-        const kind  = result.success ? 'tool-result-ok' : 'tool-result-err';
-        const body  = result.data ?? result.error ?? '';
-        const title = result.success ? ' Result' : ' Failed';
-        this._addEntry({ kind, title: result.tool + title, body });
-    }
+  public logFinalAnswer(text: string): void {
+    this._addEntry({ kind: 'final-answer', title: 'Final Answer', body: text });
+  }
 
-    public logFinalAnswer(text: string): void {
-        this._addEntry({ kind: 'final-answer', title: 'Final Answer', body: text });
-    }
+  public logError(message: string): void {
+    this._addEntry({ kind: 'error', title: 'Error', body: message });
+  }
 
-    public logError(message: string): void {
-        this._addEntry({ kind: 'error', title: 'Error', body: message });
-    }
+  public logInfo(message: string): void {
+    this._addEntry({ kind: 'info', title: message });
+  }
 
-    public logInfo(message: string): void {
-        this._addEntry({ kind: 'info', title: message });
-    }
+  // ─── Internals ───────────────────────────────────────────────────────────
 
-    // ─── Internals ───────────────────────────────────────────────────────────
+  private _addEntry(fields: Omit<LogEntry, 'timestamp'>): void {
+    const entry: LogEntry = { ...fields, timestamp: new Date() };
+    this._log.push(entry);
+    this._postEntry(entry);
+  }
 
-    private _addEntry(fields: Omit<LogEntry, 'timestamp'>): void {
-        const entry: LogEntry = { ...fields, timestamp: new Date() };
-        this._log.push(entry);
-        this._postEntry(entry);
-    }
+  private _postEntry(entry: LogEntry): void {
+    this._post({ command: 'addEntry', entry: this._serialize(entry) });
+  }
 
-    private _postEntry(entry: LogEntry): void {
-        this._post({ command: 'addEntry', entry: this._serialize(entry) });
-    }
+  private _serialize(entry: LogEntry): object {
+    return {
+      ...entry,
+      timestamp: entry.timestamp.toLocaleTimeString(),
+    };
+  }
 
-    private _serialize(entry: LogEntry): object {
-        return {
-            ...entry,
-            timestamp: entry.timestamp.toLocaleTimeString(),
-        };
-    }
-
-    private _post(message: object): void {
-        this._view?.webview.postMessage(message);
-    }
+  private _post(message: object): void {
+    this._view?.webview.postMessage(message);
+  }
 }
 
 // ─── HTML ─────────────────────────────────────────────────────────────────────
 
 function buildLogHtml(): string {
-    return [
-        '<!DOCTYPE html>',
-        '<html lang="en">',
-        '<head>',
-        '<meta charset="UTF-8"/>',
-        '<meta name="viewport" content="width=device-width,initial-scale=1.0"/>',
-        '<title>LocKick Agent Log</title>',
-        '<style>' + getLogCSS() + '</style>',
-        '</head>',
-        '<body>',
-        getLogBodyHTML(),
-        '<script>' + getLogJS() + '<\/script>',
-        '</body>',
-        '</html>',
-    ].join('\n');
+  return [
+    '<!DOCTYPE html>',
+    '<html lang="en">',
+    '<head>',
+    '<meta charset="UTF-8"/>',
+    '<meta name="viewport" content="width=device-width,initial-scale=1.0"/>',
+    '<title>LocKick Agent Log</title>',
+    '<style>' + getLogCSS() + '</style>',
+    '</head>',
+    '<body>',
+    getLogBodyHTML(),
+    '<script>' + getLogJS() + '<\/script>',
+    '</body>',
+    '</html>',
+  ].join('\n');
 }
 
 function getLogCSS(): string {
-    return `
+  return `
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;overflow:hidden;display:flex;flex-direction:column}
 body{
@@ -190,7 +207,7 @@ body{
 }
 
 function getLogBodyHTML(): string {
-    return `
+  return `
 <div class="toolbar">
   <span class="toolbar-title">&#128196; Agent Log</span>
   <button class="clear-btn" id="btn-clear">Clear</button>
@@ -202,7 +219,7 @@ function getLogBodyHTML(): string {
 }
 
 function getLogJS(): string {
-    return `
+  return `
 const vscode = acquireVsCodeApi();
 const log    = document.getElementById('log');
 const empty  = document.getElementById('empty');

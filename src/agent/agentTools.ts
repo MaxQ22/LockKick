@@ -1,3 +1,20 @@
+/*
+ * Copyright (C) 2026 Max Fend
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 /**
  * Agent Tools
  *
@@ -32,12 +49,12 @@ export async function executeTool(call: ToolCall, confirm?: ConfirmFn): Promise<
 
     try {
         switch (call.tool) {
-            case 'read_file':    return await toolReadFile(root, call.args as ReadFileArgs);
-            case 'list_files':   return await toolListFiles(root, call.args as ListFilesArgs);
+            case 'read_file': return await toolReadFile(root, call.args as ReadFileArgs);
+            case 'list_files': return await toolListFiles(root, call.args as ListFilesArgs);
             case 'propose_edit': return await toolProposeEdit(root, call.args as ProposeEditArgs, confirm);
-            case 'create_file':  return await toolCreateFile(root, call.args as CreateFileArgs, confirm);
-            case 'delete_file':  return await toolDeleteFile(root, call.args as DeleteFileArgs, confirm);
-            case 'run_search':   return await toolRunSearch(root, call.args as RunSearchArgs);
+            case 'create_file': return await toolCreateFile(root, call.args as CreateFileArgs, confirm);
+            case 'delete_file': return await toolDeleteFile(root, call.args as DeleteFileArgs, confirm);
+            case 'run_search': return await toolRunSearch(root, call.args as RunSearchArgs);
             default:
                 return { tool: call.tool, success: false, error: `Unknown tool: ${call.tool}` };
         }
@@ -76,7 +93,7 @@ function uriFor(p: string): vscode.Uri {
 
 async function toolReadFile(root: string, args: ReadFileArgs): Promise<ToolResult> {
     const absPath = resolveSafe(root, args.path);
-    const bytes   = await vscode.workspace.fs.readFile(uriFor(absPath));
+    const bytes = await vscode.workspace.fs.readFile(uriFor(absPath));
     const content = Buffer.from(bytes).toString('utf8');
 
     // Truncate very large files to avoid blowing up the context window
@@ -93,7 +110,7 @@ async function toolReadFile(root: string, args: ReadFileArgs): Promise<ToolResul
 }
 
 async function toolListFiles(root: string, args: ListFilesArgs): Promise<ToolResult> {
-    const dir     = args.directory ? resolveSafe(root, args.directory) : root;
+    const dir = args.directory ? resolveSafe(root, args.directory) : root;
     const entries = await vscode.workspace.fs.readDirectory(uriFor(dir));
 
     const lines = entries
@@ -116,7 +133,7 @@ async function toolListFiles(root: string, args: ListFilesArgs): Promise<ToolRes
 
 async function toolProposeEdit(root: string, args: ProposeEditArgs, confirm?: ConfirmFn): Promise<ToolResult> {
     const absPath = resolveSafe(root, args.path);
-    const uri     = uriFor(absPath);
+    const uri = uriFor(absPath);
 
     // Verify the file exists before diffing
     try {
@@ -130,7 +147,7 @@ async function toolProposeEdit(root: string, args: ProposeEditArgs, confirm?: Co
     const encoder = new TextEncoder();
     await vscode.workspace.fs.writeFile(tempUri, encoder.encode(args.content));
 
-    const label   = args.description ?? `LocKick: Proposed edit to ${path.basename(args.path)}`;
+    const label = args.description ?? `LocKick: Proposed edit to ${path.basename(args.path)}`;
     await vscode.commands.executeCommand('vscode.diff', uri, tempUri, label);
 
     let accepted: boolean;
@@ -149,7 +166,7 @@ async function toolProposeEdit(root: string, args: ProposeEditArgs, confirm?: Co
 
     // Clean up temp file regardless of decision
     await vscode.workspace.fs.delete(tempUri, { useTrash: false }).then(
-        () => {}, () => {} // ignore errors deleting temp file
+        () => { }, () => { } // ignore errors deleting temp file
     );
 
     closeRecentDiffs(uri);
@@ -167,7 +184,7 @@ async function toolProposeEdit(root: string, args: ProposeEditArgs, confirm?: Co
 
 async function toolCreateFile(root: string, args: CreateFileArgs, confirm?: ConfirmFn): Promise<ToolResult> {
     const absPath = resolveSafe(root, args.path);
-    const uri     = uriFor(absPath);
+    const uri = uriFor(absPath);
 
     // Check if it already exists
     let exists = false;
@@ -186,11 +203,11 @@ async function toolCreateFile(root: string, args: CreateFileArgs, confirm?: Conf
 
     // Create a temporary empty file to diff against
     const emptyUri = uri.with({ path: uri.path + '.lockick-empty' });
-    const tempUri  = uri.with({ path: uri.path + '.lockick-proposed' });
-    const encoder  = new TextEncoder();
-    
+    const tempUri = uri.with({ path: uri.path + '.lockick-proposed' });
+    const encoder = new TextEncoder();
+
     await vscode.workspace.fs.writeFile(emptyUri, encoder.encode(''));
-    await vscode.workspace.fs.writeFile(tempUri,  encoder.encode(args.content));
+    await vscode.workspace.fs.writeFile(tempUri, encoder.encode(args.content));
 
     const label = args.description ?? `LocKick: Create ${path.basename(args.path)}`;
     await vscode.commands.executeCommand('vscode.diff', emptyUri, tempUri, label);
@@ -211,8 +228,8 @@ async function toolCreateFile(root: string, args: CreateFileArgs, confirm?: Conf
 
     // Cleanup
     await Promise.all([
-        vscode.workspace.fs.delete(emptyUri, { useTrash: false }).then(() => {}, () => {}),
-        vscode.workspace.fs.delete(tempUri,  { useTrash: false }).then(() => {}, () => {}),
+        vscode.workspace.fs.delete(emptyUri, { useTrash: false }).then(() => { }, () => { }),
+        vscode.workspace.fs.delete(tempUri, { useTrash: false }).then(() => { }, () => { }),
     ]);
 
     closeRecentDiffs(uri);
@@ -229,7 +246,7 @@ async function toolCreateFile(root: string, args: CreateFileArgs, confirm?: Conf
 
 async function toolDeleteFile(root: string, args: DeleteFileArgs, confirm?: ConfirmFn): Promise<ToolResult> {
     const absPath = resolveSafe(root, args.path);
-    const uri     = uriFor(absPath);
+    const uri = uriFor(absPath);
 
     // Verify it exists
     try {
@@ -240,7 +257,7 @@ async function toolDeleteFile(root: string, args: DeleteFileArgs, confirm?: Conf
 
     // Create a temporary empty file to diff against (showing deletion)
     const emptyUri = uri.with({ path: uri.path + '.lockick-empty' });
-    const encoder  = new TextEncoder();
+    const encoder = new TextEncoder();
     await vscode.workspace.fs.writeFile(emptyUri, encoder.encode(''));
 
     const label = `LocKick: Delete ${path.basename(args.path)} (Proposed)`;
@@ -261,7 +278,7 @@ async function toolDeleteFile(root: string, args: DeleteFileArgs, confirm?: Conf
     }
 
     // Cleanup
-    await vscode.workspace.fs.delete(emptyUri, { useTrash: false }).then(() => {}, () => {});
+    await vscode.workspace.fs.delete(emptyUri, { useTrash: false }).then(() => { }, () => { });
     closeRecentDiffs(uri);
 
     if (!accepted) {
@@ -293,8 +310,8 @@ async function toolRunSearch(root: string, args: RunSearchArgs): Promise<ToolRes
 
     for (const fileUri of results) {
         try {
-            const bytes   = await vscode.workspace.fs.readFile(fileUri);
-            const text    = Buffer.from(bytes).toString('utf8');
+            const bytes = await vscode.workspace.fs.readFile(fileUri);
+            const text = Buffer.from(bytes).toString('utf8');
             const relPath = path.relative(root, fileUri.fsPath);
 
             const lines = text.split('\n');
@@ -327,15 +344,15 @@ async function toolRunSearch(root: string, args: RunSearchArgs): Promise<ToolRes
  */
 function closeRecentDiffs(fileUri: vscode.Uri) {
     const targetPath = fileUri.fsPath;
-    
+
     for (const group of vscode.window.tabGroups.all) {
         for (const tab of group.tabs) {
             if (tab.input instanceof vscode.TabInputTextDiff) {
-                const isMatch = tab.input.original.fsPath.startsWith(targetPath) || 
-                               tab.input.modified.fsPath.startsWith(targetPath);
-                
+                const isMatch = tab.input.original.fsPath.startsWith(targetPath) ||
+                    tab.input.modified.fsPath.startsWith(targetPath);
+
                 if (isMatch) {
-                    vscode.window.tabGroups.close(tab).then(() => {}, () => {});
+                    vscode.window.tabGroups.close(tab).then(() => { }, () => { });
                 }
             }
         }

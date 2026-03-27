@@ -1,3 +1,20 @@
+/*
+ * Copyright (C) 2026 Max Fend
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 /**
  * Chat View Provider
  *
@@ -8,10 +25,10 @@
 
 import * as vscode from 'vscode';
 import { OpenAIClient, ConnectionConfig, TestConnectionResult } from '../utils/openaiClient.js';
-import { AgentLogProvider }    from './agentLogProvider.js';
-import { runAgent }            from '../agent/agentRunner.js';
+import { AgentLogProvider } from './agentLogProvider.js';
+import { runAgent } from '../agent/agentRunner.js';
 import { ToolCall, ToolResult } from '../agent/agentProtocol.js';
-import { ConfirmFn }            from '../agent/agentTools.js';
+import { ConfirmFn } from '../agent/agentTools.js';
 
 type Role = 'user' | 'assistant';
 interface ChatMessage { role: Role; content: string; }
@@ -19,258 +36,258 @@ interface ChatMessage { role: Role; content: string; }
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
-    public static readonly viewType = 'lockick.chatView';
+  public static readonly viewType = 'lockick.chatView';
 
-    private _view?: vscode.WebviewView;
-    private _chatHistory: ChatMessage[] = [];
-    private _agentHistory: ChatMessage[] = [];
-    private _pendingConfirm = new Map<string, (accepted: boolean) => void>();
-    private _abortController?: AbortController;
-    private _agentMode = false;
+  private _view?: vscode.WebviewView;
+  private _chatHistory: ChatMessage[] = [];
+  private _agentHistory: ChatMessage[] = [];
+  private _pendingConfirm = new Map<string, (accepted: boolean) => void>();
+  private _abortController?: AbortController;
+  private _agentMode = false;
 
-    constructor(
-        private readonly _extensionUri: vscode.Uri,
-        private readonly _agentLog: AgentLogProvider,
-        private readonly _secretStorage: vscode.SecretStorage,
-    ) {}
+  constructor(
+    private readonly _extensionUri: vscode.Uri,
+    private readonly _agentLog: AgentLogProvider,
+    private readonly _secretStorage: vscode.SecretStorage,
+  ) { }
 
-    public resolveWebviewView(
-        webviewView: vscode.WebviewView,
-        _context: vscode.WebviewViewResolveContext,
-        _token: vscode.CancellationToken
-    ): void {
-        this._view = webviewView;
-        webviewView.webview.options = { enableScripts: true };
-        webviewView.webview.html = buildHtml();
+  public resolveWebviewView(
+    webviewView: vscode.WebviewView,
+    _context: vscode.WebviewViewResolveContext,
+    _token: vscode.CancellationToken
+  ): void {
+    this._view = webviewView;
+    webviewView.webview.options = { enableScripts: true };
+    webviewView.webview.html = buildHtml();
 
-        webviewView.webview.onDidReceiveMessage(async (msg) => {
-            switch (msg.command) {
-                case 'loadSettings':      await this._sendCurrentSettings(); break;
-                case 'saveSettings':      await this._saveSettings(msg.data); break;
-                case 'testConnection':    await this._testConnection(msg.data); break;
-                case 'sendMessage':       await this._handleSend(msg.text); break;
-                case 'stopGeneration':    this._stop(); break;
-                case 'clearHistory':      this._clearHistory(); break;
-                case 'askAboutSelection': await this._askAboutSelection(); break;
-                case 'setAgentMode':      this._setAgentMode(!!msg.enabled); break;
-                case 'toggleInlineCompletions': await this._toggleInlineCompletions(!!msg.enabled); break;
-                case 'confirmResponse':   this._resolveConfirm(msg.id, !!msg.accepted); break;
-            }
-        });
+    webviewView.webview.onDidReceiveMessage(async (msg) => {
+      switch (msg.command) {
+        case 'loadSettings': await this._sendCurrentSettings(); break;
+        case 'saveSettings': await this._saveSettings(msg.data); break;
+        case 'testConnection': await this._testConnection(msg.data); break;
+        case 'sendMessage': await this._handleSend(msg.text); break;
+        case 'stopGeneration': this._stop(); break;
+        case 'clearHistory': this._clearHistory(); break;
+        case 'askAboutSelection': await this._askAboutSelection(); break;
+        case 'setAgentMode': this._setAgentMode(!!msg.enabled); break;
+        case 'toggleInlineCompletions': await this._toggleInlineCompletions(!!msg.enabled); break;
+        case 'confirmResponse': this._resolveConfirm(msg.id, !!msg.accepted); break;
+      }
+    });
+  }
+
+  // ─── Public API ──────────────────────────────────────────────────────────
+
+  public async sendAskAboutSelection(): Promise<void> {
+    await this._askAboutSelection();
+  }
+
+  // ─── Config ──────────────────────────────────────────────────────────────
+
+  private async _getConfig(): Promise<ConnectionConfig> {
+    const cfg = vscode.workspace.getConfiguration('lockick');
+    let apiKey = await this._secretStorage.get('lockick.apiKey');
+    if (!apiKey) {
+      apiKey = 'lm-studio';
     }
 
-    // ─── Public API ──────────────────────────────────────────────────────────
+    return {
+      serverUrl: cfg.get<string>('serverUrl') || 'http://localhost:1234/v1',
+      apiKey: apiKey,
+      modelName: cfg.get<string>('modelName') || 'default',
+    };
+  }
 
-    public async sendAskAboutSelection(): Promise<void> {
-        await this._askAboutSelection();
+  // ─── Settings ────────────────────────────────────────────────────────────
+
+  private async _sendCurrentSettings(): Promise<void> {
+    const inlineConfig = vscode.workspace.getConfiguration('lockick').get<boolean>('inlineCompletionsEnabled', false);
+    const config = await this._getConfig();
+    this._post({ command: 'currentSettings', data: config, inlineCompletionsEnabled: inlineConfig });
+  }
+
+  private async _toggleInlineCompletions(enabled: boolean): Promise<void> {
+    const cfg = vscode.workspace.getConfiguration('lockick');
+    await cfg.update('inlineCompletionsEnabled', enabled, vscode.ConfigurationTarget.Global);
+    this._post({ command: 'settingsSaved' });
+  }
+
+  private async _saveSettings(data: ConnectionConfig): Promise<void> {
+    const cfg = vscode.workspace.getConfiguration('lockick');
+    await cfg.update('serverUrl', data.serverUrl, vscode.ConfigurationTarget.Global);
+    await cfg.update('modelName', data.modelName, vscode.ConfigurationTarget.Global);
+    await this._secretStorage.store('lockick.apiKey', data.apiKey || 'lm-studio');
+    this._post({ command: 'settingsSaved' });
+  }
+
+  private async _testConnection(data: ConnectionConfig): Promise<void> {
+    this._post({ command: 'testConnectionStart' });
+    const result: TestConnectionResult = await new OpenAIClient(data).testConnection();
+    this._post({ command: 'testConnectionResult', result });
+  }
+
+  // ─── Message Routing ─────────────────────────────────────────────────────
+
+  private async _handleSend(userText: string): Promise<void> {
+    if (!userText.trim()) { return; }
+    if (this._agentMode) {
+      await this._runAgentTurn(userText);
+    } else {
+      await this._runChatTurn(userText);
+    }
+  }
+
+  private _stop(): void {
+    this._abortController?.abort();
+  }
+
+  private _setAgentMode(enabled: boolean): void {
+    this._agentMode = enabled;
+    if (enabled) { this._agentHistory = []; }
+  }
+
+  private _makeConfirmFn(): ConfirmFn {
+    return (req) => new Promise<boolean>((resolve) => {
+      const id = Math.random().toString(36).slice(2, 10);
+      this._pendingConfirm.set(id, resolve);
+      this._post({ command: 'agentConfirm', id, title: req.title, body: req.body });
+    });
+  }
+
+  private _resolveConfirm(id: string, accepted: boolean): void {
+    const resolve = this._pendingConfirm.get(id);
+    if (resolve) { this._pendingConfirm.delete(id); resolve(accepted); }
+  }
+
+  private _clearHistory(): void {
+    this._chatHistory = [];
+    this._agentHistory = [];
+    this._post({ command: 'historyCleared' });
+  }
+
+  // ─── Chat Mode ───────────────────────────────────────────────────────────
+
+  private async _runChatTurn(userText: string): Promise<void> {
+    this._chatHistory.push({ role: 'user', content: userText });
+    this._post({ command: 'appendMessage', role: 'user', content: userText });
+    this._post({ command: 'streamStart' });
+
+    this._abortController = new AbortController();
+    const client = new OpenAIClient(await this._getConfig());
+    let assembled = '';
+
+    try {
+      assembled = await client.chatStream(
+        this._chatHistory as any[],
+        (delta) => this._post({ command: 'streamDelta', delta }),
+        this._abortController.signal,
+      );
+      this._chatHistory.push({ role: 'assistant', content: assembled });
+      this._post({ command: 'streamEnd' });
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        this._chatHistory.push({ role: 'assistant', content: assembled });
+        this._post({ command: 'streamAborted' });
+      } else {
+        this._post({ command: 'streamError', message: err.message });
+      }
+    }
+  }
+
+  // ─── Agent Mode ──────────────────────────────────────────────────────────
+
+  private async _runAgentTurn(userText: string): Promise<void> {
+    this._post({ command: 'appendMessage', role: 'user', content: userText });
+    this._post({ command: 'agentStart' });
+    this._agentLog.logUserTask(userText);
+
+    this._abortController = new AbortController();
+
+    await runAgent({
+      config: await this._getConfig(),
+      userMessage: userText,
+      history: this._agentHistory,
+      signal: this._abortController.signal,
+      confirm: this._makeConfirmFn(),
+      callbacks: {
+        onAssistantMessage: (text) => {
+          this._post({ command: 'agentAssistantMessage', content: text });
+          this._agentLog.logReasoning(text);
+        },
+        onToolCall: (call: ToolCall) => {
+          this._post({ command: 'agentToolCall', call });
+          this._agentLog.logToolCall(call);
+        },
+        onToolResult: (result: ToolResult) => {
+          this._post({ command: 'agentToolResult', result });
+          this._agentLog.logToolResult(result);
+        },
+        onComplete: () => {
+          this._post({ command: 'agentEnd' });
+          this._agentLog.logInfo('Agent task complete.');
+        },
+        onError: (message) => {
+          this._post({ command: 'agentError', message });
+          this._agentLog.logError(message);
+        },
+      },
+    });
+  }
+
+  // ─── Context Helpers ─────────────────────────────────────────────────────
+
+  private async _askAboutSelection(): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      vscode.window.showWarningMessage('LocKick: No active editor.');
+      return;
     }
 
-    // ─── Config ──────────────────────────────────────────────────────────────
+    const selection = editor.document.getText(editor.selection);
+    const lang = editor.document.languageId;
+    const filePath = editor.document.fileName;
 
-    private async _getConfig(): Promise<ConnectionConfig> {
-        const cfg = vscode.workspace.getConfiguration('lockick');
-        let apiKey = await this._secretStorage.get('lockick.apiKey');
-        if (!apiKey) {
-            apiKey = 'lm-studio';
-        }
-
-        return {
-            serverUrl: cfg.get<string>('serverUrl') || 'http://localhost:1234/v1',
-            apiKey:    apiKey,
-            modelName: cfg.get<string>('modelName') || 'default',
-        };
+    let question: string;
+    if (selection) {
+      question = 'Please explain the following ' + lang + ' code from `' + filePath + '`:\n```' + lang + '\n' + selection + '\n```';
+    } else {
+      const preview = editor.document.getText().split('\n').slice(0, 200).join('\n');
+      question = 'Please give me an overview of this file (`' + filePath + '`, ' + lang + '):\n```' + lang + '\n' + preview + '\n```';
     }
 
-    // ─── Settings ────────────────────────────────────────────────────────────
+    this._post({ command: 'switchToChat' });
+    await this._handleSend(question);
+  }
 
-    private async _sendCurrentSettings(): Promise<void> {
-        const inlineConfig = vscode.workspace.getConfiguration('lockick').get<boolean>('inlineCompletionsEnabled', false);
-        const config = await this._getConfig();
-        this._post({ command: 'currentSettings', data: config, inlineCompletionsEnabled: inlineConfig });
-    }
+  // ─── Utility ─────────────────────────────────────────────────────────────
 
-    private async _toggleInlineCompletions(enabled: boolean): Promise<void> {
-        const cfg = vscode.workspace.getConfiguration('lockick');
-        await cfg.update('inlineCompletionsEnabled', enabled, vscode.ConfigurationTarget.Global);
-        this._post({ command: 'settingsSaved' });
-    }
-
-    private async _saveSettings(data: ConnectionConfig): Promise<void> {
-        const cfg = vscode.workspace.getConfiguration('lockick');
-        await cfg.update('serverUrl', data.serverUrl, vscode.ConfigurationTarget.Global);
-        await cfg.update('modelName', data.modelName, vscode.ConfigurationTarget.Global);
-        await this._secretStorage.store('lockick.apiKey', data.apiKey || 'lm-studio');
-        this._post({ command: 'settingsSaved' });
-    }
-
-    private async _testConnection(data: ConnectionConfig): Promise<void> {
-        this._post({ command: 'testConnectionStart' });
-        const result: TestConnectionResult = await new OpenAIClient(data).testConnection();
-        this._post({ command: 'testConnectionResult', result });
-    }
-
-    // ─── Message Routing ─────────────────────────────────────────────────────
-
-    private async _handleSend(userText: string): Promise<void> {
-        if (!userText.trim()) { return; }
-        if (this._agentMode) {
-            await this._runAgentTurn(userText);
-        } else {
-            await this._runChatTurn(userText);
-        }
-    }
-
-    private _stop(): void {
-        this._abortController?.abort();
-    }
-
-    private _setAgentMode(enabled: boolean): void {
-        this._agentMode = enabled;
-        if (enabled) { this._agentHistory = []; }
-    }
-
-    private _makeConfirmFn(): ConfirmFn {
-        return (req) => new Promise<boolean>((resolve) => {
-            const id = Math.random().toString(36).slice(2, 10);
-            this._pendingConfirm.set(id, resolve);
-            this._post({ command: 'agentConfirm', id, title: req.title, body: req.body });
-        });
-    }
-
-    private _resolveConfirm(id: string, accepted: boolean): void {
-        const resolve = this._pendingConfirm.get(id);
-        if (resolve) { this._pendingConfirm.delete(id); resolve(accepted); }
-    }
-
-    private _clearHistory(): void {
-        this._chatHistory = [];
-        this._agentHistory = [];
-        this._post({ command: 'historyCleared' });
-    }
-
-    // ─── Chat Mode ───────────────────────────────────────────────────────────
-
-    private async _runChatTurn(userText: string): Promise<void> {
-        this._chatHistory.push({ role: 'user', content: userText });
-        this._post({ command: 'appendMessage', role: 'user', content: userText });
-        this._post({ command: 'streamStart' });
-
-        this._abortController = new AbortController();
-        const client = new OpenAIClient(await this._getConfig());
-        let assembled = '';
-
-        try {
-            assembled = await client.chatStream(
-                this._chatHistory as any[],
-                (delta) => this._post({ command: 'streamDelta', delta }),
-                this._abortController.signal,
-            );
-            this._chatHistory.push({ role: 'assistant', content: assembled });
-            this._post({ command: 'streamEnd' });
-        } catch (err: any) {
-            if (err.name === 'AbortError') {
-                this._chatHistory.push({ role: 'assistant', content: assembled });
-                this._post({ command: 'streamAborted' });
-            } else {
-                this._post({ command: 'streamError', message: err.message });
-            }
-        }
-    }
-
-    // ─── Agent Mode ──────────────────────────────────────────────────────────
-
-    private async _runAgentTurn(userText: string): Promise<void> {
-        this._post({ command: 'appendMessage', role: 'user', content: userText });
-        this._post({ command: 'agentStart' });
-        this._agentLog.logUserTask(userText);
-
-        this._abortController = new AbortController();
-
-        await runAgent({
-            config:      await this._getConfig(),
-            userMessage: userText,
-            history:     this._agentHistory,
-            signal:      this._abortController.signal,
-            confirm:     this._makeConfirmFn(),
-            callbacks: {
-                onAssistantMessage: (text) => {
-                    this._post({ command: 'agentAssistantMessage', content: text });
-                    this._agentLog.logReasoning(text);
-                },
-                onToolCall: (call: ToolCall) => {
-                    this._post({ command: 'agentToolCall', call });
-                    this._agentLog.logToolCall(call);
-                },
-                onToolResult: (result: ToolResult) => {
-                    this._post({ command: 'agentToolResult', result });
-                    this._agentLog.logToolResult(result);
-                },
-                onComplete: () => {
-                    this._post({ command: 'agentEnd' });
-                    this._agentLog.logInfo('Agent task complete.');
-                },
-                onError: (message) => {
-                    this._post({ command: 'agentError', message });
-                    this._agentLog.logError(message);
-                },
-            },
-        });
-    }
-
-    // ─── Context Helpers ─────────────────────────────────────────────────────
-
-    private async _askAboutSelection(): Promise<void> {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) {
-            vscode.window.showWarningMessage('LocKick: No active editor.');
-            return;
-        }
-
-        const selection = editor.document.getText(editor.selection);
-        const lang      = editor.document.languageId;
-        const filePath  = editor.document.fileName;
-
-        let question: string;
-        if (selection) {
-            question = 'Please explain the following ' + lang + ' code from `' + filePath + '`:\n```' + lang + '\n' + selection + '\n```';
-        } else {
-            const preview = editor.document.getText().split('\n').slice(0, 200).join('\n');
-            question = 'Please give me an overview of this file (`' + filePath + '`, ' + lang + '):\n```' + lang + '\n' + preview + '\n```';
-        }
-
-        this._post({ command: 'switchToChat' });
-        await this._handleSend(question);
-    }
-
-    // ─── Utility ─────────────────────────────────────────────────────────────
-
-    private _post(message: object): void {
-        this._view?.webview.postMessage(message);
-    }
+  private _post(message: object): void {
+    this._view?.webview.postMessage(message);
+  }
 }
 
 // ─── HTML Builder ─────────────────────────────────────────────────────────────
 
 function buildHtml(): string {
-    return [
-        '<!DOCTYPE html>',
-        '<html lang="en">',
-        '<head>',
-        '<meta charset="UTF-8"/>',
-        '<meta name="viewport" content="width=device-width,initial-scale=1.0"/>',
-        '<title>LocKick</title>',
-        '<style>' + getCSS() + '</style>',
-        '</head>',
-        '<body>',
-        getBodyHTML(),
-        '<script>' + getJS() + '<\/script>',
-        '</body>',
-        '</html>',
-    ].join('\n');
+  return [
+    '<!DOCTYPE html>',
+    '<html lang="en">',
+    '<head>',
+    '<meta charset="UTF-8"/>',
+    '<meta name="viewport" content="width=device-width,initial-scale=1.0"/>',
+    '<title>LocKick</title>',
+    '<style>' + getCSS() + '</style>',
+    '</head>',
+    '<body>',
+    getBodyHTML(),
+    '<script>' + getJS() + '<\/script>',
+    '</body>',
+    '</html>',
+  ].join('\n');
 }
 
 function getCSS(): string {
-    return `
+  return `
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
 body{
@@ -426,7 +443,7 @@ body{
 }
 
 function getBodyHTML(): string {
-    return `
+  return `
 <div class="chat-header">
   <div class="header-title">
     <span class="logo-icon">&#128640;</span> LocKick
@@ -507,7 +524,7 @@ function getBodyHTML(): string {
 }
 
 function getJS(): string {
-    return `
+  return `
 const vscode = acquireVsCodeApi();
 
 // Tab switching
