@@ -52,6 +52,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 case 'clearHistory':      this._clearHistory(); break;
                 case 'askAboutSelection': await this._askAboutSelection(); break;
                 case 'setAgentMode':      this._setAgentMode(!!msg.enabled); break;
+                case 'toggleInlineCompletions': await this._toggleInlineCompletions(!!msg.enabled); break;
                 case 'confirmResponse':   this._resolveConfirm(msg.id, !!msg.accepted); break;
             }
         });
@@ -77,7 +78,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // ─── Settings ────────────────────────────────────────────────────────────
 
     private _sendCurrentSettings(): void {
-        this._post({ command: 'currentSettings', data: this._getConfig() });
+        const inlineConfig = vscode.workspace.getConfiguration('lockick').get<boolean>('inlineCompletionsEnabled', false);
+        this._post({ command: 'currentSettings', data: this._getConfig(), inlineCompletionsEnabled: inlineConfig });
+    }
+
+    private async _toggleInlineCompletions(enabled: boolean): Promise<void> {
+        const cfg = vscode.workspace.getConfiguration('lockick');
+        await cfg.update('inlineCompletionsEnabled', enabled, vscode.ConfigurationTarget.Global);
+        this._post({ command: 'settingsSaved' });
     }
 
     private async _saveSettings(data: ConnectionConfig): Promise<void> {
@@ -356,6 +364,7 @@ body{
 .toolbar-right{display:flex;align-items:center;gap:10px}
 .icon-btn{background:none;border:1px solid transparent;border-radius:4px;color:var(--vscode-foreground);opacity:.6;font-size:11px;padding:5px 10px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all .15s}
 .icon-btn:hover{opacity:1;background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.1)}
+.icon-btn.active{opacity:1;background:rgba(229,160,13,.15);border-color:rgba(229,160,13,.3);color:#e5a00d}
 .icon-btn .icon{font-size:13px}
 .input-row{display:flex;gap:10px;align-items:flex-end}
 #chat-input{flex:1;resize:none;min-height:40px;max-height:180px;overflow-y:auto;padding:12px;border:1px solid var(--vscode-input-border,rgba(255,255,255,.12));border-radius:8px;background:var(--vscode-input-background,rgba(255,255,255,.04));color:var(--vscode-input-foreground,var(--vscode-foreground));font-family:inherit;font-size:var(--vscode-font-size,13px);line-height:1.5;outline:none;transition:border-color .15s}
@@ -442,6 +451,9 @@ function getBodyHTML(): string {
       </button>
       
       <div class="toolbar-right">
+        <button class="icon-btn" id="btn-autocomplete" title="Toggle Inline Auto-complete">
+          <span class="icon">&#9889;</span> <span>Auto-complete: OFF</span>
+        </button>
         <button class="icon-btn" id="btn-clear" title="Clear conversation">
           <span class="icon">&#128465;</span> Clear
         </button>
@@ -529,10 +541,23 @@ var chatInput    = document.getElementById('chat-input');
 var btnSend      = document.getElementById('btn-send');
 var btnClear     = document.getElementById('btn-clear');
 var btnSelection = document.getElementById('btn-selection');
+var btnAutocomplete = document.getElementById('btn-autocomplete');
 
 var isStreaming        = false;
 var streamingBubble    = null;
 var accumulatedContent = '';
+var isAutocompleteOn   = false;
+
+function updateAutocompleteBtn() {
+  btnAutocomplete.className = 'icon-btn' + (isAutocompleteOn ? ' active' : '');
+  btnAutocomplete.innerHTML = '<span class="icon">&#9889;</span> <span>Auto-complete: ' + (isAutocompleteOn ? 'ON' : 'OFF') + '</span>';
+}
+
+btnAutocomplete.addEventListener('click', function() {
+  isAutocompleteOn = !isAutocompleteOn;
+  updateAutocompleteBtn();
+  vscode.postMessage({ command: 'toggleInlineCompletions', enabled: isAutocompleteOn });
+});
 
 function escapeHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -666,6 +691,10 @@ window.addEventListener('message', function(ev) {
       inputUrl.value   = msg.data.serverUrl || '';
       inputKey.value   = msg.data.apiKey    || '';
       inputModel.value = msg.data.modelName || '';
+      if (typeof msg.inlineCompletionsEnabled === 'boolean') {
+        isAutocompleteOn = msg.inlineCompletionsEnabled;
+        updateAutocompleteBtn();
+      }
       break;
     case 'settingsSaved': showStatus('success','&#10003; Settings saved.'); break;
     case 'testConnectionStart': showStatus('info','<span class="spinner"></span> Connecting&hellip;'); break;

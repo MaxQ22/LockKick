@@ -7,13 +7,19 @@
 import * as vscode from 'vscode';
 import { ChatViewProvider } from './providers/chatViewProvider.js';
 import { AgentLogProvider } from './providers/agentLogProvider.js';
+import { LocKickInlineCompletionProvider } from './providers/inlineCompletionProvider.js';
 
 export function activate(context: vscode.ExtensionContext): void {
     const agentLog  = new AgentLogProvider();
     const chatPanel = new ChatViewProvider(context.extensionUri, agentLog);
+    const inlineProvider = new LocKickInlineCompletionProvider();
 
     context.subscriptions.push(
-        // ── Webview Providers ────────────────────────────────────────────────
+        // ── Providers ────────────────────────────────────────────────────────
+        vscode.languages.registerInlineCompletionItemProvider(
+            { pattern: '**' }, 
+            inlineProvider
+        ),
         vscode.window.registerWebviewViewProvider(
             ChatViewProvider.viewType,
             chatPanel,

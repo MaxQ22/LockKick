@@ -79,6 +79,16 @@
           "type": "string",
           "default": "default",
           "description": "Name of the model to use."
+        },
+        "lockick.inlineCompletionsEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable AI-powered inline code completions."
+        },
+        "lockick.completionMaxTokens": {
+          "type": "number",
+          "default": 64,
+          "description": "Maximum tokens to generate for inline completions."
         }
       }
     }

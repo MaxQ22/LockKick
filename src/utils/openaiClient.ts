@@ -109,6 +109,41 @@ export class OpenAIClient {
     }
 
     /**
+     * Sends a direct completion or short chat request for inline auto-completion.
+     */
+    async getCompletion(prompt: string, maxTokens: number = 64, signal?: AbortSignal): Promise<string> {
+        const url = this.config.serverUrl.replace(/\/+$/, '');
+
+        // Using chat completions endpoint as it's most broadly supported by standard models
+        const response = await fetch(`${url}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${this.config.apiKey}`
+            },
+            body: JSON.stringify({
+                model: this.config.modelName,
+                messages: [
+                    { role: 'system', content: 'You are an intelligent code completion engine. Your task is to complete the code provided by the user. ONLY output the exact code that should be inserted at the cursor position. Do not enclose it in markdown blocks. Do not explain. Do not repeat code.' },
+                    { role: 'user', content: prompt }
+                ],
+                temperature: 0.2,
+                max_tokens: maxTokens,
+                stop: ['\n\n'] // Useful to stop rambling in inline autocomplete
+            }),
+            signal,
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`API Error ${response.status}: ${errorText}`);
+        }
+
+        const data: any = await response.json();
+        return data.choices[0].message.content;
+    }
+
+    /**
      * Streams a chat completion request.
      * Calls onChunk with each new text delta as it arrives.
      * Returns the full assembled response when done.
