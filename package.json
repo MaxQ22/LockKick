@@ -4,6 +4,11 @@
   "description": "The minimalist VS Code client for local LLMs.",
   "version": "0.1.0",
   "publisher": "maxgf",
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MaxQ22/LockKick.git"
+  },
   "icon": "resources/icon.png",
   "engines": {
     "vscode": "^1.85.0"
