@@ -44,6 +44,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private _pendingConfirm = new Map<string, (accepted: boolean) => void>();
   private _abortController?: AbortController;
   private _agentMode = false;
+  private _activeModelOverride?: string;
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -76,6 +77,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         case 'setAgentMode': this._setAgentMode(!!msg.enabled); break;
         case 'toggleInlineCompletions': await this._toggleInlineCompletions(!!msg.enabled); break;
         case 'confirmResponse': this._resolveConfirm(msg.id, !!msg.accepted); break;
+        case 'refreshModels': await this._refreshModels(); break;
+        case 'setActiveModel': this._activeModelOverride = msg.model; break;
       }
     });
   }
@@ -98,7 +101,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     return {
       serverUrl: cfg.get<string>('serverUrl') || 'http://localhost:1234/v1',
       apiKey: apiKey,
-      modelName: cfg.get<string>('modelName') || 'default',
+      modelName: this._activeModelOverride || cfg.get<string>('modelName') || 'default',
     };
   }
 
@@ -108,6 +111,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const inlineConfig = vscode.workspace.getConfiguration('lockick').get<boolean>('inlineCompletionsEnabled', false);
     const config = await this._getConfig();
     this._post({ command: 'currentSettings', data: config, inlineCompletionsEnabled: inlineConfig });
+    await this._refreshModels();
+  }
+
+  private async _refreshModels(): Promise<void> {
+    this._post({ command: 'refreshModelsStart' });
+    try {
+      const config = await this._getConfig();
+      const result = await new OpenAIClient(config).testConnection();
+      this._post({ command: 'refreshModelsResult', result, activeModel: config.modelName });
+    } catch (e: any) {
+      this._post({ command: 'refreshModelsResult', result: { success: false, message: e.message }, activeModel: 'default' });
+    }
   }
 
   private async _toggleInlineCompletions(enabled: boolean): Promise<void> {
@@ -443,6 +458,16 @@ body{
 .confirm-resolved{font-size:11.5px;padding:8px 14px;border-radius:8px;font-weight:700;display:inline-flex;align-items:center;gap:10px}
 .confirm-resolved.accepted{background:rgba(78,201,109,.15);color:#4ec96d;border:1px solid rgba(78,201,109,0.3)}
 .confirm-resolved.declined{background:rgba(244,121,131,.15);color:#f47983;border:1px solid rgba(244,121,131,0.3)}
+
+/* footer */
+.chat-footer{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:var(--vscode-sideBarSectionHeader-background,rgba(0,0,0,0.1));border-top:1px solid var(--vscode-panel-border,rgba(255,255,255,.08));font-size:10.5px;flex-shrink:0;}
+.status-indicator{display:flex;align-items:center;gap:6px;opacity:.8;}
+.status-dot{width:7px;height:7px;border-radius:50%;background:#888;}
+.status-dot.connected{background:#4ec96d;box-shadow:0 0 6px rgba(78,201,109,.6);}
+.status-dot.disconnected{background:#f47983;box-shadow:0 0 6px rgba(244,121,131,.6);}
+.status-dot.loading{background:#e5a00d;animation:pulse 1.2s infinite alternate;}
+.footer-select{flex:1;max-width:140px;margin-left:auto;text-overflow:ellipsis;background:var(--vscode-dropdown-background,#333);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:var(--vscode-dropdown-foreground);font-size:10.5px;padding:2px 4px;cursor:pointer;outline:none;}
+.footer-select:focus{border-color:var(--vscode-focusBorder,#007acc);}
 `;
 }
 
@@ -499,6 +524,17 @@ function getBodyHTML(iconUri: string): string {
       <textarea id="chat-input" rows="1" placeholder="Type a message..."></textarea>
       <button class="send-btn" id="btn-send">Send</button>
     </div>
+  </div>
+  
+  <!-- Chat Footer -->
+  <div class="chat-footer">
+    <div class="status-indicator" title="LLM Connection Status">
+      <span class="status-dot loading" id="footer-status-dot"></span> <span id="footer-status-text">Connecting...</span>
+    </div>
+    <select id="footer-model-select" class="footer-select" disabled title="Override active model for this session">
+      <option value="default">default</option>
+    </select>
+    <button id="btn-refresh-status" class="icon-btn" style="padding:2px 4px;margin-left:4px;" title="Refresh Connection">&#10227;</button>
   </div>
 </div>
 
@@ -824,8 +860,72 @@ window.addEventListener('message', function(ev) {
       messagesEl.appendChild(es);
       break;
     case 'switchToChat': showPanel('chat'); break;
+    case 'refreshModelsStart':
+      footerStatusDot.className = 'status-dot loading';
+      footerStatusText.textContent = 'Checking...';
+      footerModelSelect.disabled = true;
+      break;
+    case 'refreshModelsResult':
+      var res = msg.result;
+      if (res.success) {
+        footerStatusDot.className = 'status-dot connected';
+        footerStatusText.textContent = 'Connected';
+        footerModelSelect.disabled = false;
+        
+        // Prevent redrawing options if the user is currently interacting with the dropdown
+        if (document.activeElement !== footerModelSelect) {
+          footerModelSelect.innerHTML = '';
+          if (res.models && res.models.length > 0) {
+            var found = false;
+            res.models.forEach(function(m) {
+              var opt = document.createElement('option');
+              opt.value = m.id;
+              opt.textContent = m.id;
+              if (m.id === msg.activeModel) { opt.selected = true; found = true; }
+              footerModelSelect.appendChild(opt);
+            });
+            if (!found) {
+              var custOpt = document.createElement('option');
+              custOpt.value = msg.activeModel;
+              custOpt.textContent = msg.activeModel;
+              custOpt.selected = true;
+              footerModelSelect.appendChild(custOpt);
+            }
+          } else {
+            var eOpt = document.createElement('option');
+            eOpt.value = msg.activeModel; eOpt.textContent = msg.activeModel;
+            footerModelSelect.appendChild(eOpt);
+          }
+        }
+      } else {
+        footerStatusDot.className = 'status-dot disconnected';
+        footerStatusText.textContent = 'Disconnected';
+        footerModelSelect.disabled = true;
+        if (document.activeElement !== footerModelSelect) {
+          footerModelSelect.innerHTML = '<option>error</option>';
+        }
+      }
+      break;
   }
 });
+
+// Footer logic
+var footerStatusText = document.getElementById('footer-status-text');
+var footerStatusDot  = document.getElementById('footer-status-dot');
+var footerModelSelect= document.getElementById('footer-model-select');
+var btnRefreshStatus = document.getElementById('btn-refresh-status');
+
+btnRefreshStatus.addEventListener('click', function() {
+  vscode.postMessage({ command: 'refreshModels' });
+});
+footerModelSelect.addEventListener('change', function() {
+  vscode.postMessage({ command: 'setActiveModel', model: footerModelSelect.value });
+});
+
+// Automatically poll connection status every 15 seconds
+setInterval(function() {
+  vscode.postMessage({ command: 'refreshModels' });
+}, 15000);
 
 vscode.postMessage({ command: 'loadSettings' });
 chatInput.focus();
