@@ -114,23 +114,30 @@ async function toolReadFile(root: string, args: ReadFileArgs): Promise<ToolResul
 
 async function toolListFiles(root: string, args: ListFilesArgs): Promise<ToolResult> {
     const dir = args.directory ? resolveSafe(root, args.directory) : root;
-    const entries = await vscode.workspace.fs.readDirectory(uriFor(dir));
+    
+    // Create a relative pattern to search recursively inside the requested directory
+    const pattern = new vscode.RelativePattern(uriFor(dir), '**/*');
+    
+    // Find all files, excluding node_modules to avoid flooding the context
+    const files = await vscode.workspace.findFiles(pattern, '**/node_modules/**');
 
-    const lines = entries
-        .sort((a, b) => {
-            // directories first, then alphabetical
-            if (a[1] !== b[1]) { return a[1] === vscode.FileType.Directory ? -1 : 1; }
-            return a[0].localeCompare(b[0]);
-        })
-        .map(([name, type]) => {
-            const rel = path.relative(root, path.join(dir, name));
-            return type === vscode.FileType.Directory ? `${rel}/` : rel;
-        });
+    const lines = files
+        .map(uri => path.relative(root, uri.fsPath).replace(/\\/g, '/'))
+        .sort((a, b) => a.localeCompare(b));
+
+    // Truncate to avoid context explosion if there are too many files
+    const MAX_FILES = 1000;
+    const truncatedLines = lines.slice(0, MAX_FILES);
+    let outputData = truncatedLines.join('\n');
+    
+    if (lines.length > MAX_FILES) {
+        outputData += `\n... (${lines.length - MAX_FILES} more files omitted)`;
+    }
 
     return {
         tool: 'list_files',
         success: true,
-        data: lines.join('\n') || '(empty directory)',
+        data: outputData || '(no files found)',
     };
 }
 

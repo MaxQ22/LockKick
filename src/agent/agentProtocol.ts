@@ -86,7 +86,7 @@ Available tools:
 read_file     - Read the content of a file.
   args: { "path": "<relative or absolute path>" }
 
-list_files    - List files and directories.
+list_files    - List all files recursively.
   args: { "directory": "<optional relative path, defaults to workspace root>" }
 
 propose_edit  - Propose an edit to an existing file. The user will see a diff and can approve or reject.
@@ -128,7 +128,9 @@ export function parseToolCall(response: string): ToolCall | null {
             const jsonStr = trimmed.slice(TOOL_CALL_PREFIX.length).trim();
             try {
                 const parsed = JSON.parse(jsonStr) as ToolCall;
-                if (typeof parsed.tool === 'string' && parsed.args !== undefined) {
+                if (typeof parsed.tool === 'string') {
+                    // If args is omitted, default to an empty object
+                    parsed.args = parsed.args || {};
                     return parsed;
                 }
             } catch {
