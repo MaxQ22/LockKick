@@ -1,0 +1,11 @@
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Outer Hexagon -->
+  <path d="M 8 3 H 16 L 22 12 L 16 21 H 8 L 2 12 Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+  <!-- Inner Eye Curve intersecting the Hexagon -->
+  <path d="M 2 12 Q 12 1 22 12 Q 12 23 2 12 Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+  <!-- Inner Pupil / Iris Circle -->
+  <circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <!-- Terminal Prompt '>_' -->
+  <path d="M 10 9.5 L 12.5 12 L 10 14.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 12.5 15 H 15" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+</svg>

@@ -58,7 +58,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   ): void {
     this._view = webviewView;
     webviewView.webview.options = { enableScripts: true };
-    webviewView.webview.html = buildHtml();
+    
+    // Resolve local disk paths securely for the Webview
+    const iconUri = webviewView.webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'resources', 'icon.png'));
+    
+    webviewView.webview.html = buildHtml(iconUri.toString());
 
     webviewView.webview.onDidReceiveMessage(async (msg) => {
       switch (msg.command) {
@@ -268,7 +272,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 // ─── HTML Builder ─────────────────────────────────────────────────────────────
 
-function buildHtml(): string {
+function buildHtml(iconUri: string): string {
   return [
     '<!DOCTYPE html>',
     '<html lang="en">',
@@ -279,7 +283,7 @@ function buildHtml(): string {
     '<style>' + getCSS() + '</style>',
     '</head>',
     '<body>',
-    getBodyHTML(),
+    getBodyHTML(iconUri),
     '<script>' + getJS() + '<\/script>',
     '</body>',
     '</html>',
@@ -442,11 +446,14 @@ body{
 `;
 }
 
-function getBodyHTML(): string {
+function getBodyHTML(iconUri: string): string {
   return `
 <div class="chat-header">
-  <div class="header-title">
-    <span class="logo-icon">&#128640;</span> LocKick
+  <div class="header-title" style="font-size:18px; align-items:center;">
+    <div style="display:flex; align-items:center; gap:12px;">
+      <img src="${iconUri}" width="56" height="56" alt="LocKick" style="border-radius:10px; box-shadow: 0 4px 12px rgba(0,0,0,0.4);" />
+      <span style="font-weight: 800;">LocKick</span>
+    </div>
     <span class="mode-badge chat" id="mode-badge">Chat Mode</span>
   </div>
 </div>
