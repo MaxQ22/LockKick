@@ -37,7 +37,8 @@ export type ToolName =
     | 'propose_edit'
     | 'create_file'
     | 'delete_file'
-    | 'run_search';
+    | 'run_search'
+    | 'run_command';
 
 export interface ReadFileArgs { path: string }
 export interface ListFilesArgs { directory?: string }
@@ -45,6 +46,7 @@ export interface ProposeEditArgs { path: string; content: string; description?: 
 export interface CreateFileArgs { path: string; content: string; description?: string }
 export interface DeleteFileArgs { path: string }
 export interface RunSearchArgs { query: string; directory?: string }
+export interface RunCommandArgs { command: string; cwd?: string }
 
 export type ToolArgs =
     | ReadFileArgs
@@ -52,7 +54,8 @@ export type ToolArgs =
     | ProposeEditArgs
     | CreateFileArgs
     | DeleteFileArgs
-    | RunSearchArgs;
+    | RunSearchArgs
+    | RunCommandArgs;
 
 export interface ToolCall {
     tool: ToolName;
@@ -97,6 +100,9 @@ delete_file   - Delete a file. The user must confirm.
 
 run_search    - Search for text across the workspace.
   args: { "query": "<search term>", "directory": "<optional directory>" }
+
+run_command   - Run a shell command restricted to the workspace.
+  args: { "command": "<shell command>", "cwd": "<optional RELATIVE path within the workspace>" }
 
 RULES:
 - Issue only ONE tool call per response. Wait for the result before proceeding.

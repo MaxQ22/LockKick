@@ -27,10 +27,12 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as cp from 'child_process';
+import * as util from 'util';
 import {
     ToolCall, ToolResult,
     ReadFileArgs, ListFilesArgs, ProposeEditArgs,
-    CreateFileArgs, DeleteFileArgs, RunSearchArgs,
+    CreateFileArgs, DeleteFileArgs, RunSearchArgs, RunCommandArgs,
 } from './agentProtocol.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -55,6 +57,7 @@ export async function executeTool(call: ToolCall, confirm?: ConfirmFn): Promise<
             case 'create_file': return await toolCreateFile(root, call.args as CreateFileArgs, confirm);
             case 'delete_file': return await toolDeleteFile(root, call.args as DeleteFileArgs, confirm);
             case 'run_search': return await toolRunSearch(root, call.args as RunSearchArgs);
+            case 'run_command': return await toolRunCommand(root, call.args as RunCommandArgs, confirm);
             default:
                 return { tool: call.tool, success: false, error: `Unknown tool: ${call.tool}` };
         }
@@ -336,6 +339,101 @@ async function toolRunSearch(root: string, args: RunSearchArgs): Promise<ToolRes
         success: true,
         data: `Found matches for "${args.query}":\n${hits.join('\n')}${suffix}`,
     };
+}
+
+let _outputChannel: vscode.OutputChannel | undefined;
+function getOutputChannel(): vscode.OutputChannel {
+    if (!_outputChannel) {
+        _outputChannel = vscode.window.createOutputChannel('LocKick Agent Term');
+    }
+    return _outputChannel;
+}
+
+async function toolRunCommand(root: string, args: RunCommandArgs, confirm?: ConfirmFn): Promise<ToolResult> {
+    const cwd = args.cwd ? resolveSafe(root, args.cwd) : root;
+
+    let accepted: boolean;
+    if (confirm) {
+        accepted = await confirm({
+            title: `Run Command`,
+            body: `Do you want to run exactly this command in the terminal?\n\n> ${args.command}\n\nRunning commands can have unintended side effects.`,
+        });
+    } else {
+        const choice = await vscode.window.showWarningMessage(
+            `LocKick Agent wants to run a command:\n\n${args.command}\n\nRun it?`,
+            { modal: true }, 'Run', 'Cancel'
+        );
+        accepted = choice === 'Run';
+    }
+
+    if (!accepted) {
+        return { tool: 'run_command', success: false, error: 'User cancelled command execution.' };
+    }
+
+    const channel = getOutputChannel();
+    channel.show(true); // Bring to front but do not steal focus
+    channel.appendLine(`\n----------------------------------------`);
+    channel.appendLine(`LocKick Agent running in ${cwd}`);
+    channel.appendLine(`$ ${args.command}`);
+    channel.appendLine(`----------------------------------------\n`);
+
+    return new Promise<ToolResult>((resolve) => {
+        let output = '';
+        let errorOutput = '';
+
+        const child = cp.spawn(args.command, { cwd, shell: true });
+
+        child.stdout.on('data', (data) => {
+            const str = data.toString();
+            output += str;
+            channel.append(str);
+        });
+
+        child.stderr.on('data', (data) => {
+            const str = data.toString();
+            errorOutput += str;
+            channel.append(str);
+        });
+
+        child.on('error', (err) => {
+            channel.appendLine(`\n[Failed to start process: ${err.message}]`);
+            resolve({
+                tool: 'run_command',
+                success: false,
+                error: `Process error: ${err.message}`
+            });
+        });
+
+        child.on('close', (code) => {
+            channel.appendLine(`\n----------------------------------------`);
+            channel.appendLine(`Process exited with code ${code}`);
+
+            // Combine stdout and stderr for the LLM
+            let fullOutput = output;
+            if (errorOutput) {
+                fullOutput += `\n[STDERR]\n${errorOutput}`;
+            }
+
+            const MAX_CHARS = 16_000;
+            const truncated = fullOutput.length > MAX_CHARS
+                ? fullOutput.slice(0, MAX_CHARS) + `\n\n... [output truncated at ${MAX_CHARS} chars]`
+                : fullOutput;
+
+            if (code === 0) {
+                resolve({ 
+                    tool: 'run_command', 
+                    success: true, 
+                    data: truncated || '(Command succeeded with no output)' 
+                });
+            } else {
+                resolve({ 
+                    tool: 'run_command', 
+                    success: false, 
+                    error: `Command failed with code ${code ?? 'unknown'}.\nOutput:\n${truncated}` 
+                });
+            }
+        });
+    });
 }
 
 /**

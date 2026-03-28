@@ -35,6 +35,7 @@ LocKick is designed as a privacy-respecting coding assistant that relies entirel
     *   Open the LocKick panel in VS Code.
     *   Navigate to the **Settings** tab.
     *   Enter your server URL (e.g., `http://localhost:1234/v1`).
+    *   Enter your API key if your local server requires one. If not, you can leave it empty.
     *   Click **Test Connection** to verify connectivity with your active model.
 
 ![Settings Panel](resources/settings_panel.png)
