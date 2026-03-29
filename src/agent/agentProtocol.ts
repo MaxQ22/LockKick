@@ -105,6 +105,9 @@ run_command   - Run a shell command restricted to the workspace.
   args: { "command": "<shell command>", "cwd": "<optional RELATIVE path within the workspace>" }
 
 RULES:
+- There could be a file .vscode/workspace-summary.md that contains a summary of the project. Always read it if it exists before doing anything else.
+- Try to keep the code files short. If you need a lot of code, no file should be larger then 300 lines.
+- If you have no idea of the codebase, start by listing files to get an overview.
 - Issue only ONE tool call per response. Wait for the result before proceeding.
 - Never guess file contents — read the file first if you need to know what is in it.
 - Always prefer propose_edit over create_file for files that already exist.

@@ -74,6 +74,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         case 'stopGeneration': this._stop(); break;
         case 'clearHistory': this._clearHistory(); break;
         case 'askAboutSelection': await this._askAboutSelection(); break;
+        case 'generateWorkspaceSummary': await this._generateWorkspaceSummary(); break;
         case 'setAgentMode': this._setAgentMode(!!msg.enabled); break;
         case 'toggleInlineCompletions': await this._toggleInlineCompletions(!!msg.enabled); break;
         case 'confirmResponse': this._resolveConfirm(msg.id, !!msg.accepted); break;
@@ -88,7 +89,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   public async sendAskAboutSelection(): Promise<void> {
     await this._askAboutSelection();
   }
-
+  public async sendGenerateWorkspaceSummary(): Promise<void> {
+    await this._generateWorkspaceSummary();
+  }
   // ─── Config ──────────────────────────────────────────────────────────────
 
   private async _getConfig(): Promise<ConnectionConfig> {
@@ -276,6 +279,56 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     this._post({ command: 'switchToChat' });
     await this._handleSend(question);
+  }
+
+  private async _generateWorkspaceSummary(): Promise<void> {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      vscode.window.showWarningMessage('LocKick: No workspace folder is open.');
+      return;
+    }
+
+    const prompt = `Please analyze this entire workspace and create a comprehensive summary document. 
+Follow these steps:
+1. Use the list_files command to list all files in the workspace
+2. Read the important files to understand the project structure, purpose, and architecture
+3. Create a detailed workspace summary and save it to .vscode/workspace-summary.md
+
+The summary should have the following markdown structure:
+
+# Workspace Summary
+
+## Project Overview
+Brief description of what the project is, its purpose, and high-level goals.
+
+## Directory Structure
+Description of the main directories and their purposes.
+
+## Key Modules
+List of important modules/packages and what they do.
+
+## Important Data Structures
+Key interfaces, types, or data models used in the project.
+
+## Core Functions and Classes
+Main entry points, important functions, and core classes.
+
+## Cross Module Relationships
+How different modules interact with each other.
+
+Please analyze the workspace thoroughly and create this summary document. Use the create_file tool to save the summary to .vscode/workspace-summary.md`;
+
+    // Switch to agent mode to enable tool usage
+    const wasAgentMode = this._agentMode;
+    this._setAgentMode(true);
+    
+    this._post({ command: 'switchToChat' });
+    await this._handleSend(prompt);
+    
+    // Restore previous mode after sending
+    if (!wasAgentMode) {
+      this._setAgentMode(false);
+    }
   }
 
   // ─── Utility ─────────────────────────────────────────────────────────────
@@ -505,6 +558,9 @@ function getBodyHTML(iconUri: string): string {
       <button class="icon-btn" id="btn-selection" title="Ask about current selection or file">
         <span class="icon">&#8679;</span> Selection
       </button>
+      <button class="icon-btn" id="btn-workspace-summary" title="Generate workspace summary">
+        <span class="icon">📋</span> Workspace Summary
+      </button>
       
       <div class="toolbar-right">
         <button class="icon-btn" id="btn-autocomplete" title="Toggle Inline Auto-complete">
@@ -608,6 +664,7 @@ var chatInput    = document.getElementById('chat-input');
 var btnSend      = document.getElementById('btn-send');
 var btnClear     = document.getElementById('btn-clear');
 var btnSelection = document.getElementById('btn-selection');
+var btnWorkspaceSummary = document.getElementById('btn-workspace-summary');
 var btnAutocomplete = document.getElementById('btn-autocomplete');
 
 var isStreaming        = false;
@@ -725,6 +782,7 @@ function adjustHeight() {
 }
 btnClear.addEventListener('click',     function(){ vscode.postMessage({ command: 'clearHistory' }); });
 btnSelection.addEventListener('click', function(){ vscode.postMessage({ command: 'askAboutSelection' }); });
+btnWorkspaceSummary.addEventListener('click', function(){ vscode.postMessage({ command: 'generateWorkspaceSummary' }); });
 
 // Settings
 var inputUrl   = document.getElementById('input-url');
