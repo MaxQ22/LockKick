@@ -79,18 +79,19 @@ export async function runAgent(options: AgentRunOptions): Promise<void> {
 
     const client = new OpenAIClient(config);
 
-    // Build the full history for this run, prepending the system instructions
-    const systemMessage: AgentMessage = {
-        role: 'user',
-        content: '[AGENT SYSTEM INSTRUCTIONS — DO NOT INCLUDE IN YOUR REPLY]\n' + AGENT_SYSTEM_PROMPT,
-    };
-    const fullHistory: AgentMessage[] = [systemMessage, ...history];
-
-    // Append the new user message
+    // Append the new user message to history
     history.push({ role: 'user', content: userMessage });
-    fullHistory.push({ role: 'user', content: userMessage });
 
     let iterations = 0;
+
+    // Helper function to build messages for LLM call with system prompt prepended every time
+    const buildLLMMessages = (): AgentMessage[] => {
+        const systemMessage: AgentMessage = {
+            role: 'user',
+            content: '[AGENT SYSTEM INSTRUCTIONS — DO NOT INCLUDE IN YOUR REPLY]\n' + AGENT_SYSTEM_PROMPT,
+        };
+        return [systemMessage, ...history];
+    };
 
     while (iterations < maxIterations) {
         // ── Check for user-requested stop ──────────────────────────────────
@@ -103,7 +104,8 @@ export async function runAgent(options: AgentRunOptions): Promise<void> {
         // ── Call the LLM ───────────────────────────────────────────────────
         let response: string;
         try {
-            response = await client.chat(fullHistory as any[], signal);
+            const messagesForLLM = buildLLMMessages();
+            response = await client.chat(messagesForLLM as any[], signal);
         } catch (e: any) {
             if (signal.aborted || e.name === 'AbortError') {
                 break; // user stopped — exit cleanly
@@ -132,7 +134,6 @@ export async function runAgent(options: AgentRunOptions): Promise<void> {
         callbacks.onToolCall(toolCall);
 
         // Record the assistant message (including the TOOL_CALL line) in history
-        fullHistory.push({ role: 'assistant', content: response });
         history.push({ role: 'assistant', content: response });
 
         // ── Execute the tool ───────────────────────────────────────────────
@@ -146,7 +147,6 @@ export async function runAgent(options: AgentRunOptions): Promise<void> {
 
         // Feed the result back into the conversation
         const resultMessage = formatToolResult(result);
-        fullHistory.push({ role: 'user', content: resultMessage });
         history.push({ role: 'user', content: resultMessage });
 
         // If the user explicitly rejected/cancelled, tell the agent clearly
@@ -161,12 +161,12 @@ export async function runAgent(options: AgentRunOptions): Promise<void> {
                     role: 'user',
                     content: 'The user rejected or cancelled that operation. Please stop and explain what you were trying to do, then ask how the user would like to proceed.',
                 };
-                fullHistory.push(stopNote);
                 history.push(stopNote);
 
                 // One final LLM call so it can respond gracefully
                 try {
-                    const finalResponse = await client.chat(fullHistory as any[], signal);
+                    const messagesForLLM = buildLLMMessages();
+                    const finalResponse = await client.chat(messagesForLLM as any[], signal);
                     if (!signal.aborted) {
                         history.push({ role: 'assistant', content: finalResponse });
                         callbacks.onAssistantMessage(finalResponse);

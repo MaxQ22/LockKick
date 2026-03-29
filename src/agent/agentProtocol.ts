@@ -122,17 +122,38 @@ const TOOL_RESULT_PREFIX = 'TOOL_RESULT:';
 /**
  * Parses a tool call from a model response string.
  * Returns null if no tool call is found.
+ * Handles multi-line JSON by continuing to append lines until valid JSON is found.
  */
 export function parseToolCall(response: string): ToolCall | null {
     const lines = response.split('\n');
-    for (const line of lines) {
-        const trimmed = line.trim();
+    for (let i = 0; i < lines.length; i++) {
+        const trimmed = lines[i].trim();
         if (trimmed.startsWith(TOOL_CALL_PREFIX)) {
-            const jsonStr = trimmed.slice(TOOL_CALL_PREFIX.length).trim();
+            let jsonStr = trimmed.slice(TOOL_CALL_PREFIX.length).trim();
+            
+            // Try to parse the JSON, and if it fails (likely because it spans multiple lines),
+            // keep appending subsequent lines until we get valid JSON or run out of lines
+            let j = i + 1;
+            while (j < lines.length) {
+                try {
+                    const parsed = JSON.parse(jsonStr) as ToolCall;
+                    if (typeof parsed.tool === 'string') {
+                        // If args is omitted, default to an empty object
+                        parsed.args = parsed.args || {};
+                        return parsed;
+                    }
+                    break; // Valid parse but no tool property
+                } catch {
+                    // JSON is incomplete, try appending the next line
+                    jsonStr += '\n' + lines[j];
+                    j++;
+                }
+            }
+            
+            // Try one last time with all accumulated lines
             try {
                 const parsed = JSON.parse(jsonStr) as ToolCall;
                 if (typeof parsed.tool === 'string') {
-                    // If args is omitted, default to an empty object
                     parsed.args = parsed.args || {};
                     return parsed;
                 }
@@ -152,12 +173,40 @@ export function formatToolResult(result: ToolResult): string {
 }
 
 /**
- * Strips any TOOL_CALL line from a response for display purposes.
+ * Strips any TOOL_CALL (and its continuation lines) from a response for display purposes.
  */
 export function stripToolCall(response: string): string {
-    return response
-        .split('\n')
-        .filter(line => !line.trim().startsWith(TOOL_CALL_PREFIX))
-        .join('\n')
-        .trim();
+    const lines = response.split('\n');
+    const result: string[] = [];
+    
+    let inToolCall = false;
+    let braceCount = 0;
+    
+    for (const line of lines) {
+        const trimmed = line.trim();
+        
+        if (!inToolCall && trimmed.startsWith(TOOL_CALL_PREFIX)) {
+            // Starting a tool call
+            inToolCall = true;
+            // Count braces to find where the JSON ends
+            const jsonPart = trimmed.slice(TOOL_CALL_PREFIX.length).trim();
+            braceCount = (jsonPart.match(/{/g) || []).length - (jsonPart.match(/}/g) || []).length;
+            
+            // If JSON is complete on this line, just skip it
+            if (braceCount === 0) {
+                inToolCall = false;
+            }
+        } else if (inToolCall) {
+            // Continue counting braces until JSON is complete
+            braceCount += (line.match(/{/g) || []).length - (line.match(/}/g) || []).length;
+            if (braceCount <= 0) {
+                inToolCall = false;
+            }
+        } else {
+            // Regular output line
+            result.push(line);
+        }
+    }
+    
+    return result.join('\n').trim();
 }
