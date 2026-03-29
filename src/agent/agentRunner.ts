@@ -65,7 +65,7 @@ export interface AgentRunOptions {
 
 // ─── Runner ───────────────────────────────────────────────────────────────────
 
-const DEFAULT_MAX_ITERATIONS = 10;
+const DEFAULT_MAX_ITERATIONS = 100;
 
 /**
  * Runs the full agentic loop for a single user turn.
