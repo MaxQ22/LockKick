@@ -32,7 +32,7 @@ import { OpenAIClient, ConnectionConfig } from '../utils/openaiClient.js';
 import {
     AgentMessage, ToolCall, ToolResult,
     AGENT_SYSTEM_PROMPT,
-    parseToolCall, formatToolResult, stripToolCall,
+    parseToolCall, formatToolResult, stripToolCall, extractThinkContent, stripThinkTags,
 } from './agentProtocol.js';
 import { executeTool, ConfirmFn } from './agentTools.js';
 
@@ -114,18 +114,28 @@ export async function runAgent(options: AgentRunOptions): Promise<void> {
             return;
         }
 
-        // ── Parse the response ─────────────────────────────────────────────
-        const toolCall = parseToolCall(response);
+        // ── Extract and log thinking content ───────────────────────────────
+        const thinkingContent = extractThinkContent(response);
+        if (thinkingContent) {
+            callbacks.onAssistantMessage(`**Thinking:**\n${thinkingContent}`);
+        }
+
+        // ── Strip think tags and parse the response ────────────────────────
+        const cleanedResponse = stripThinkTags(response);
+        const toolCall = parseToolCall(cleanedResponse);
 
         if (!toolCall) {
             // No tool call → final answer
-            history.push({ role: 'assistant', content: response });
-            callbacks.onAssistantMessage(response);
+            const cleanedForHistory = stripToolCall(cleanedResponse);
+            if (cleanedForHistory) {
+                history.push({ role: 'assistant', content: cleanedForHistory });
+                callbacks.onAssistantMessage(cleanedForHistory);
+            }
             break;
         }
 
         // ── Show any reasoning text before the tool call ───────────────────
-        const reasoning = stripToolCall(response);
+        const reasoning = stripToolCall(cleanedResponse);
         if (reasoning) {
             callbacks.onAssistantMessage(reasoning);
         }
@@ -133,8 +143,9 @@ export async function runAgent(options: AgentRunOptions): Promise<void> {
         // ── Notify UI of the tool call ─────────────────────────────────────
         callbacks.onToolCall(toolCall);
 
-        // Record the assistant message (including the TOOL_CALL line) in history
-        history.push({ role: 'assistant', content: response });
+        // Record the assistant message (using cleaned response for history)
+        // This preserves think tags being removed but keeps TOOL_CALL for LLM context
+        history.push({ role: 'assistant', content: cleanedResponse });
 
         // ── Execute the tool ───────────────────────────────────────────────
         // Check abort again before executing (tool execution may show a dialog)
@@ -168,8 +179,16 @@ export async function runAgent(options: AgentRunOptions): Promise<void> {
                     const messagesForLLM = buildLLMMessages();
                     const finalResponse = await client.chat(messagesForLLM as any[], signal);
                     if (!signal.aborted) {
-                        history.push({ role: 'assistant', content: finalResponse });
-                        callbacks.onAssistantMessage(finalResponse);
+                        // Extract and log thinking content if present
+                        const finalThinking = extractThinkContent(finalResponse);
+                        if (finalThinking) {
+                            callbacks.onAssistantMessage(`**Thinking:**\n${finalThinking}`);
+                        }
+                        
+                        // Strip think tags and tool calls for display
+                        const finalCleaned = stripToolCall(stripThinkTags(finalResponse));
+                        history.push({ role: 'assistant', content: finalCleaned });
+                        callbacks.onAssistantMessage(finalCleaned);
                     }
                 } catch { /* ignore errors in the graceful close */ }
                 break; // Do NOT continue the loop
