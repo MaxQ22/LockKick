@@ -39,9 +39,52 @@ export interface TestConnectionResult {
 
 export class OpenAIClient {
     private config: ConnectionConfig;
+    private readonly MAX_RETRIES = 3;
+    private readonly INITIAL_RETRY_DELAY_MS = 500;
 
     constructor(config: ConnectionConfig) {
         this.config = config;
+    }
+
+    /**
+     * Helper method to fetch with automatic retry logic and exponential backoff.
+     * Retries on network errors and specific HTTP status codes.
+     */
+    private async fetchWithRetry(
+        url: string,
+        options: RequestInit,
+        maxRetries: number = this.MAX_RETRIES
+    ): Promise<Response> {
+        let lastError: Error | null = null;
+        
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+                const response = await fetch(url, options);
+                
+                // Retry on 5xx errors and connection timeouts
+                if (response.status >= 500 || response.status === 429) {
+                    if (attempt < maxRetries) {
+                        const delayMs = this.INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt);
+                        await new Promise(resolve => setTimeout(resolve, delayMs));
+                        continue;
+                    }
+                }
+                
+                return response;
+            } catch (error: any) {
+                lastError = error;
+                
+                // Retry on network errors
+                if (attempt < maxRetries) {
+                    const delayMs = this.INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt);
+                    await new Promise(resolve => setTimeout(resolve, delayMs));
+                    continue;
+                }
+            }
+        }
+        
+        // All retries exhausted
+        throw lastError || new Error('Failed to fetch after maximum retries');
     }
 
     /**
@@ -55,7 +98,7 @@ export class OpenAIClient {
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 8000);
 
-            const response = await fetch(`${url}/models`, {
+            const response = await this.fetchWithRetry(`${url}/models`, {
                 method: 'GET',
                 headers: {
                     'Authorization': `Bearer ${this.config.apiKey}`,
@@ -98,7 +141,8 @@ export class OpenAIClient {
 
     /**
      * Sends a chat completion request (non-streaming).
-     * Long requests may take considerable time; defaults to 5 minute timeout.
+     * Long requests may take considerable time; defaults to 10 minute timeout.
+     * Includes automatic retry logic with exponential backoff.
      */
     async chat(messages: { role: string; content: string }[], signal?: AbortSignal): Promise<string> {
         const url = this.config.serverUrl.replace(/\/+$/, '');
@@ -112,7 +156,7 @@ export class OpenAIClient {
             // Use timeout controller as the signal, unless user provided one
             const activeSignal = signal || controller.signal;
 
-            const response = await fetch(`${url}/chat/completions`, {
+            const response = await this.fetchWithRetry(`${url}/chat/completions`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -148,6 +192,7 @@ export class OpenAIClient {
 
     /**
      * Sends a direct completion or short chat request for inline auto-completion.
+     * Includes automatic retry logic with exponential backoff.
      */
     async getCompletion(prompt: string, maxTokens: number = 64, signal?: AbortSignal): Promise<string> {
         const url = this.config.serverUrl.replace(/\/+$/, '');
@@ -161,7 +206,7 @@ export class OpenAIClient {
             const activeSignal = signal || controller.signal;
 
             // Using chat completions endpoint as it's most broadly supported by standard models
-            const response = await fetch(`${url}/chat/completions`, {
+            const response = await this.fetchWithRetry(`${url}/chat/completions`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -204,6 +249,8 @@ export class OpenAIClient {
      * Streams a chat completion request.
      * Calls onChunk with each new text delta as it arrives.
      * Returns the full assembled response when done.
+     * Long streaming requests may take considerable time; defaults to 15 minute timeout.
+     * Includes automatic retry logic with exponential backoff.
      */
     async chatStream(
         messages: { role: string; content: string }[],
@@ -212,54 +259,74 @@ export class OpenAIClient {
     ): Promise<string> {
         const url = this.config.serverUrl.replace(/\/+$/, '');
 
-        const response = await fetch(`${url}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${this.config.apiKey}`
-            },
-            body: JSON.stringify({
-                model: this.config.modelName,
-                messages,
-                temperature: 0.7,
-                stream: true
-            }),
-            signal
-        });
+        try {
+            // Set up timeout for long-running streaming requests (15 minutes)
+            const controller = new AbortController();
+            const timeoutMs = 15 * 60 * 1000; // 15 minutes
+            const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`API Error ${response.status}: ${errorText}`);
-        }
-        if (!response.body) {
-            throw new Error('No response body returned from server.');
-        }
+            // Use timeout controller as the signal, unless user provided one
+            const activeSignal = signal || controller.signal;
 
-        const decoder = new TextDecoder('utf-8');
-        let fullContent = '';
-        let buffer = '';
+            const response = await this.fetchWithRetry(`${url}/chat/completions`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${this.config.apiKey}`
+                },
+                body: JSON.stringify({
+                    model: this.config.modelName,
+                    messages,
+                    temperature: 0.7,
+                    stream: true
+                }),
+                signal: activeSignal
+            });
 
-        for await (const chunk of response.body as any) {
-            buffer += decoder.decode(chunk, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() ?? '';
+            clearTimeout(timeout);
 
-            for (const line of lines) {
-                const trimmed = line.trim();
-                if (!trimmed.startsWith('data: ')) { continue; }
-                const dataStr = trimmed.slice(6);
-                if (dataStr === '[DONE]') { return fullContent; }
-                try {
-                    const parsed = JSON.parse(dataStr);
-                    const delta = parsed.choices?.[0]?.delta?.content;
-                    if (delta) {
-                        fullContent += delta;
-                        onChunk(delta);
-                    }
-                } catch { /* ignore partial JSON */ }
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`API Error ${response.status}: ${errorText}`);
             }
-        }
+            if (!response.body) {
+                throw new Error('No response body returned from server.');
+            }
 
-        return fullContent;
+            const decoder = new TextDecoder('utf-8');
+            let fullContent = '';
+            let buffer = '';
+
+            for await (const chunk of response.body as any) {
+                buffer += decoder.decode(chunk, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() ?? '';
+
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed.startsWith('data: ')) { continue; }
+                    const dataStr = trimmed.slice(6);
+                    if (dataStr === '[DONE]') { return fullContent; }
+                    try {
+                        const parsed = JSON.parse(dataStr);
+                        const delta = parsed.choices?.[0]?.delta?.content;
+                        if (delta) {
+                            fullContent += delta;
+                            onChunk(delta);
+                        }
+                    } catch { /* ignore partial JSON */ }
+                }
+            }
+
+            return fullContent;
+        } catch (error: any) {
+            if (error.name === 'AbortError') {
+                throw new Error('Request cancelled by user or exceeded 15-minute timeout');
+            }
+            if (error.message?.includes('fetch')) {
+                throw new Error(`Network error: Failed to reach ${url}. Is the server running and accessible?`);
+            }
+            throw error;
+        }
     }
 }
