@@ -98,31 +98,52 @@ export class OpenAIClient {
 
     /**
      * Sends a chat completion request (non-streaming).
+     * Long requests may take considerable time; defaults to 5 minute timeout.
      */
     async chat(messages: { role: string; content: string }[], signal?: AbortSignal): Promise<string> {
         const url = this.config.serverUrl.replace(/\/+$/, '');
 
-        const response = await fetch(`${url}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${this.config.apiKey}`
-            },
-            body: JSON.stringify({
-                model: this.config.modelName,
-                messages,
-                temperature: 0.7
-            }),
-            signal,
-        });
+        try {
+            // Set up timeout for long-running LLM requests (10 minutes)
+            const controller = new AbortController();
+            const timeoutMs = 10 * 60 * 1000; // 10 minutes
+            const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`API Error ${response.status}: ${errorText}`);
+            // Use timeout controller as the signal, unless user provided one
+            const activeSignal = signal || controller.signal;
+
+            const response = await fetch(`${url}/chat/completions`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${this.config.apiKey}`
+                },
+                body: JSON.stringify({
+                    model: this.config.modelName,
+                    messages,
+                    temperature: 0.7
+                }),
+                signal: activeSignal,
+            });
+
+            clearTimeout(timeout);
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`API Error ${response.status}: ${errorText}`);
+            }
+
+            const data: any = await response.json();
+            return data.choices[0].message.content;
+        } catch (error: any) {
+            if (error.name === 'AbortError') {
+                throw new Error('Request cancelled by user');
+            }
+            if (error.message?.includes('fetch')) {
+                throw new Error(`Network error: Failed to reach ${url}. Is the server running and accessible?`);
+            }
+            throw error;
         }
-
-        const data: any = await response.json();
-        return data.choices[0].message.content;
     }
 
     /**
@@ -131,33 +152,52 @@ export class OpenAIClient {
     async getCompletion(prompt: string, maxTokens: number = 64, signal?: AbortSignal): Promise<string> {
         const url = this.config.serverUrl.replace(/\/+$/, '');
 
-        // Using chat completions endpoint as it's most broadly supported by standard models
-        const response = await fetch(`${url}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${this.config.apiKey}`
-            },
-            body: JSON.stringify({
-                model: this.config.modelName,
-                messages: [
-                    { role: 'system', content: 'You are an intelligent code completion engine. Your task is to complete the code provided by the user. ONLY output the exact code that should be inserted at the cursor position. Do not enclose it in markdown blocks. Do not explain. Do not repeat code.' },
-                    { role: 'user', content: prompt }
-                ],
-                temperature: 0.2,
-                max_tokens: maxTokens,
-                stop: ['\n\n'] // Useful to stop rambling in inline autocomplete
-            }),
-            signal,
-        });
+        try {
+            // Set up timeout (2 minutes for completions, shorter than full chat)
+            const controller = new AbortController();
+            const timeoutMs = 2 * 60 * 1000; // 2 minutes
+            const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`API Error ${response.status}: ${errorText}`);
+            const activeSignal = signal || controller.signal;
+
+            // Using chat completions endpoint as it's most broadly supported by standard models
+            const response = await fetch(`${url}/chat/completions`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${this.config.apiKey}`
+                },
+                body: JSON.stringify({
+                    model: this.config.modelName,
+                    messages: [
+                        { role: 'system', content: 'You are an intelligent code completion engine. Your task is to complete the code provided by the user. ONLY output the exact code that should be inserted at the cursor position. Do not enclose it in markdown blocks. Do not explain. Do not repeat code.' },
+                        { role: 'user', content: prompt }
+                    ],
+                    temperature: 0.2,
+                    max_tokens: maxTokens,
+                    stop: ['\n\n'] // Useful to stop rambling in inline autocomplete
+                }),
+                signal: activeSignal,
+            });
+
+            clearTimeout(timeout);
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`API Error ${response.status}: ${errorText}`);
+            }
+
+            const data: any = await response.json();
+            return data.choices[0].message.content;
+        } catch (error: any) {
+            if (error.name === 'AbortError') {
+                throw new Error('Request cancelled by user');
+            }
+            if (error.message?.includes('fetch')) {
+                throw new Error(`Network error: Failed to reach ${url}. Is the server running and accessible?`);
+            }
+            throw error;
         }
-
-        const data: any = await response.json();
-        return data.choices[0].message.content;
     }
 
     /**
