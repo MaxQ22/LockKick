@@ -112,16 +112,30 @@ async function toolReadFile(root: string, args: ReadFileArgs): Promise<ToolResul
     const bytes = await vscode.workspace.fs.readFile(uriFor(absPath));
     const content = Buffer.from(bytes).toString('utf8');
 
+    // Add bracketed line numbers with explicit markers for empty lines
+    const lines = content.split('\n');
+    const lineCount = lines.length;
+    const padWidth = String(lineCount).length;
+    const numberedLines = lines.map((line, i) => {
+        const lineNum = String(i + 1).padStart(padWidth, '0');
+        // Explicitly mark empty lines so model can count them
+        const displayLine = line.length === 0 ? '(empty line)' : line;
+        return `[${lineNum}] ${displayLine}`;
+    }).join('\n');
+
     // Truncate very large files to avoid blowing up the context window
     const MAX_CHARS = 16_000;
-    const truncated = content.length > MAX_CHARS
-        ? content.slice(0, MAX_CHARS) + `\n\n... [file truncated at ${MAX_CHARS} chars]`
-        : content;
+    const truncated = numberedLines.length > MAX_CHARS
+        ? numberedLines.slice(0, MAX_CHARS) + `\n\n... [file truncated at ${MAX_CHARS} chars]`
+        : numberedLines;
+
+    // Add EOF marker
+    const withEof = truncated + '\n\n[EOF] End of file.';
 
     return {
         tool: 'read_file',
         success: true,
-        data: truncated,
+        data: withEof,
     };
 }
 
@@ -151,6 +165,180 @@ async function toolListFiles(root: string, args: ListFilesArgs): Promise<ToolRes
         tool: 'list_files',
         success: true,
         data: outputData || '(no files found)',
+    };
+}
+
+async function toolReadLines(root: string, args: ReadLinesArgs): Promise<ToolResult> {
+    const absPath = resolveSafe(root, args.path);
+    const uri = uriFor(absPath);
+    
+    try {
+        await vscode.workspace.fs.stat(uri);
+    } catch {
+        return { tool: 'read_lines', success: false, error: `File not found: ${args.path}` };
+    }
+
+    const doc = await vscode.workspace.openTextDocument(uri);
+    const lineCount = doc.lineCount;
+    
+    // Validate line range
+    if (args.startLine < 1 || args.endLine < args.startLine || args.endLine > lineCount) {
+        return {
+            tool: 'read_lines',
+            success: false,
+            error: `Invalid line range: startLine=${args.startLine}, endLine=${args.endLine}, file has ${lineCount} lines.`,
+        };
+    }
+
+    // Convert 1-indexed to 0-indexed
+    const startIdx = args.startLine - 1;
+    const endIdx = args.endLine - 1;
+    
+    // Extract lines with bracketed numbers, explicitly mark empty lines
+    const padWidth = String(lineCount).length;
+    const selectedLines: string[] = [];
+    for (let i = startIdx; i <= endIdx; i++) {
+        const lineNum = String(i + 1).padStart(padWidth, '0');
+        const text = doc.lineAt(i).text;
+        // Explicitly mark empty lines so model doesn't miss them
+        const displayText = text.length === 0 ? '(empty line)' : text;
+        selectedLines.push(`[${lineNum}] ${displayText}`);
+    }
+    
+    // Check if we've reached the end of the file
+    const isEndOfFile = args.endLine === lineCount;
+    const eofMarker = isEndOfFile ? '\n\n[EOF] This is the last line of the file. Do not try to read beyond this.' : '';
+    const output = selectedLines.join('\n') + eofMarker;
+    
+    return {
+        tool: 'read_lines',
+        success: true,
+        data: output,
+    };
+}
+
+async function toolDiffEdit(root: string, args: DiffEditArgs, confirm?: ConfirmFn): Promise<ToolResult> {
+    const absPath = resolveSafe(root, args.path);
+    const uri = uriFor(absPath);
+
+    // Verify the file exists
+    try {
+        await vscode.workspace.fs.stat(uri);
+    } catch {
+        return { tool: 'diff_edit', success: false, error: `File not found: ${args.path}` };
+    }
+
+    // Open the document to access VS Code's line handling
+    const doc = await vscode.workspace.openTextDocument(uri);
+    const lineCount = doc.lineCount;
+
+    // Validate line numbers (1-indexed). endLine is inclusive.
+    if (args.startLine < 1 || args.endLine < args.startLine || args.endLine > lineCount) {
+        return {
+            tool: 'diff_edit',
+            success: false,
+            error: `Invalid line range: startLine=${args.startLine}, endLine=${args.endLine}, file has ${lineCount} lines.`,
+        };
+    }
+
+    // Convert 1-indexed to 0-indexed
+    const startLineIndex = args.startLine - 1;
+    const endLineIndex = args.endLine - 1;
+
+    // VALIDATION: Check if oldContent matches the actual file
+    const actualLines: string[] = [];
+    for (let i = startLineIndex; i <= endLineIndex; i++) {
+        actualLines.push(doc.lineAt(i).text);
+    }
+    const actualContent = actualLines.join('\n');
+
+    if (actualContent !== args.oldContent) {
+        return {
+            tool: 'diff_edit',
+            success: false,
+            error: `VALIDATION FAILED: The oldContent you specified does not match the file.\n\nExpected (yours):\n${args.oldContent}\n\nActual (from file, lines ${args.startLine}-${args.endLine}):\n${actualContent}\n\nPlease use read_lines() to get the exact current content, then try again.`,
+        };
+    }
+
+    // Content matches! Now reconstruct the file
+    const newLines = args.newContent.split('\n');
+    
+    // Collect all lines: before + new + after
+    const allLines: string[] = [];
+    
+    // Add lines before the edit range
+    for (let i = 0; i < startLineIndex; i++) {
+        allLines.push(doc.lineAt(i).text);
+    }
+    
+    // Add the new content (as lines)
+    allLines.push(...newLines);
+    
+    // Add lines after the edit range
+    for (let i = endLineIndex + 1; i < lineCount; i++) {
+        allLines.push(doc.lineAt(i).text);
+    }
+    
+    // Reconstruct the file: join with newlines, then add a final newline if the original had one
+    let newFileContent = allLines.join('\n');
+    const originalContent = doc.getText();
+    if (originalContent.endsWith('\n')) {
+        newFileContent += '\n';
+    }
+
+    // Write the FULL file content to temp files for diffing (not just the changed lines)
+    // This way the user sees the complete context of the change
+    const tempOriginalUri = uri.with({ path: uri.path + '.lockick-original' });
+    const tempNewUri = uri.with({ path: uri.path + '.lockick-new' });
+    const encoder = new TextEncoder();
+
+    await vscode.workspace.fs.writeFile(tempOriginalUri, encoder.encode(doc.getText()));
+    await vscode.workspace.fs.writeFile(tempNewUri, encoder.encode(newFileContent));
+
+    const lineRange = args.startLine === args.endLine
+        ? `line ${args.startLine}`
+        : `lines ${args.startLine}–${args.endLine}`;
+    const label = args.description
+        ? `LocKick: ${args.description}`
+        : `LocKick: Edit ${path.basename(args.path)} (${lineRange})`;
+
+    await vscode.commands.executeCommand('vscode.diff', tempOriginalUri, tempNewUri, label);
+
+    let accepted: boolean;
+    if (confirm) {
+        accepted = await confirm({
+            title: `Edit: ${path.relative(root, absPath)}`,
+            body: args.description || `Apply changes to ${lineRange}?`,
+        });
+    } else {
+        const choice = await vscode.window.showWarningMessage(
+            `LocKick Agent wants to edit "${path.relative(root, absPath)}" at ${lineRange}. Apply this change?`,
+            { modal: true }, 'Apply', 'Reject'
+        );
+        accepted = choice === 'Apply';
+    }
+
+    // Cleanup temp files
+    await Promise.all([
+        vscode.workspace.fs.delete(tempOriginalUri, { useTrash: false }).then(() => { }, () => { }),
+        vscode.workspace.fs.delete(tempNewUri, { useTrash: false }).then(() => { }, () => { }),
+    ]);
+
+    closeRecentDiffs(uri);
+
+    if (!accepted) {
+        await vscode.window.showTextDocument(uri);
+        return { tool: 'diff_edit', success: false, error: 'User rejected the proposed edit.' };
+    }
+
+    // Apply the change to the actual file
+    await vscode.workspace.fs.writeFile(uri, encoder.encode(newFileContent));
+    await vscode.window.showTextDocument(uri);
+
+    return {
+        tool: 'diff_edit',
+        success: true,
+        data: `File "${args.path}" updated successfully (${lineRange}).`,
     };
 }
 
@@ -478,27 +666,47 @@ async function toolReadFileRange(root: string, args: ReadFileRangeArgs): Promise
             truncated = true;
         }
         sliced = content.slice(actualStart, actualEnd);
+        
+        return {
+            tool: 'read_file_range',
+            success: true,
+            data: JSON.stringify({
+                content: sliced,
+                actual_start: actualStart,
+                actual_end: actualEnd,
+                truncated,
+            }),
+        };
     } else {
-        // lines mode
+        // lines mode - return bracketed line numbers like read_file
         const lines = content.split('\n');
         actualStart = Math.max(0, args.start);
         actualEnd = Math.min(lines.length, args.end);
         if (actualEnd < args.end) {
             truncated = true;
         }
-        sliced = lines.slice(actualStart, actualEnd).join('\n');
+        
+        const selectedLines = lines.slice(actualStart, actualEnd);
+        const totalLines = lines.length;
+        const padWidth = String(totalLines).length;
+        
+        const numberedLines = selectedLines.map((line, i) => {
+            const actualLineNum = actualStart + i + 1; // +1 because line numbers are 1-indexed
+            const lineNum = String(actualLineNum).padStart(padWidth, '0');
+            const displayLine = line.length === 0 ? '(empty line)' : line;
+            return `[${lineNum}] ${displayLine}`;
+        }).join('\n');
+        
+        const withMeta = numberedLines + 
+            `\n\n[INFO] Returned lines ${actualStart + 1}-${actualEnd} of ${totalLines}` +
+            (truncated ? ` (truncated)` : '');
+        
+        return {
+            tool: 'read_file_range',
+            success: true,
+            data: withMeta,
+        };
     }
-
-    return {
-        tool: 'read_file_range',
-        success: true,
-        data: JSON.stringify({
-            content: sliced,
-            actual_start: actualStart,
-            actual_end: actualEnd,
-            truncated,
-        }),
-    };
 }
 
 async function toolGetFileInfo(root: string, args: GetFileInfoArgs): Promise<ToolResult> {
@@ -826,7 +1034,8 @@ async function toolProposePatch(root: string, args: ProposePatchArgs, confirm?: 
                 lines.splice(lineOffset, 0, diffLine.slice(1));
                 patchedContent = lines.join('\n');
                 lineOffset++;
-            } else if (!diffLine.startsWith('@@') && !diffLine.startsWith('---') && !diffLine.startsWith('+++')) {
+            } else if (diffLine.startsWith(' ')) {
+                // Context line (unchanged) - includes empty lines represented as a single space
                 lineOffset++;
             }
         }

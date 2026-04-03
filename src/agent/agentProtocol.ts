@@ -110,11 +110,23 @@ TOOL_CALL: {"tool":"<tool_name>","args":{...}}
 
 Available tools:
 
-read_file - Read a file.
+read_file - Read a file WITH BRACKETED LINE NUMBERS for clarity.
   args: { "path": "<path>" }
+  Output format:
+    [001] line one content
+    [002] line two content
+    [003] (empty line)
+    [004] line four content
+  NOTE: Empty lines are explicitly marked as "(empty line)" to help you count correctly.
+  Use these exact line numbers in read_file_range, propose_patch, and apply_snippet.
 
-read_file_range - Read a byte or line range.
-  args: { "path": "<path>", "start": <number>, "end": <number>, "mode": "bytes" | "lines" }
+read_file_range - Read a specific line range to verify content before editing.
+  args: { "path": "<path>", "start": <1-indexed line>, "end": <1-indexed line>, "mode": "lines" }
+  ALWAYS use this BEFORE propose_patch or apply_snippet to get exact line numbers and content.
+  Returns lines with bracketed numbers: [001] content...
+  
+  REMEMBER: [NNN] and "(empty line)" are markers for YOU to read the file. They are NOT part of the actual file content.
+  When you see "[005] (empty line)", line 5 is blank in the actual file, not the text "(empty line)".
 
 get_file_info - Get file metadata.
   args: { "path": "<path>" }
@@ -134,8 +146,36 @@ get_project_structure - Return project structure.
 propose_edit - Replace full file content.
   args: { "path": "<file>", "content": "<new content>", "description": "<reason>" }
 
-propose_patch - Apply a diff patch.
-  args: { "path": "<file>", "diff": "<unified diff>", "description": "<reason>" }
+propose_patch - Apply a unified diff patch to change lines (PREFERRED for small edits).
+  args: { "path": "<file>", "diff": "<unified diff string>", "description": "<reason>" }
+  
+  CRITICAL WORKFLOW:
+  1. Call read_file_range(path, start_line, end_line, "lines") to see exact line numbers and content
+  2. Examine the output carefully - empty lines show as "(empty line)"
+  3. Count the actual line numbers from the bracketed [NNN] markers
+  4. Generate a proper unified diff using those exact line numbers
+  5. Pass the diff to propose_patch
+  
+  UNIFIED DIFF FORMAT (example for file with lines 1-6):
+    --- file.txt
+    +++ file.txt
+    @@ -3,4 +3,6 @@
+     line 3 old content
+    +line 3.5 new content
+    
+     line 4 content
+     line 5 content
+  
+  WRONG FORMATS (do NOT do this):
+    [007] Test4 = 70;           <- NO: don't include [NNN] markers in content
+    (empty line)               <- NO: don't write "(empty line)" in the file
+    --- file.txt               <- NO: don't use JSON format
+    +++ file.txt
+    ... in a JSON object
+    
+    instead of: "diff": "--- file.txt\n+++ file.txt\n@@ ... actual diff"
+  
+  The diff must be a STRING with newlines, not JSON objects mixed with content!
 
 apply_snippet - Insert or replace a snippet.
   args: { "path": "<file>", "location": { "line": <n>, "end_line": <optional n> }, "snippet": "<code>", "description": "<reason>" }
@@ -158,14 +198,23 @@ run_symbol_search - Search for symbols.
 run_command - Run a shell command in workspace.
   args: { "command": "<cmd>", "cwd": "<optional relative path>" }
 
-RULES:
+CRITICAL RULES:
 - One tool call per response. Wait for the result before continuing.
-- Never guess file contents. Read files before modifying them.
-- Use propose_edit for existing files; use create_file only for new files.
-- When the task is complete, answer normally without TOOL_CALL.
-- Prefer tools over direct answers. Use tools to gather information and make changes, then summarize in your final response.
-- Prefer diff patches for small edits, and full content replacement for large changes. Use your judgment based on the scope of the edit.
-- You might find a project summary in .vscode/workspace-summary.md. See if this file exists and use it to understand the project structure and key files if you need context.
+- ALWAYS call read_file_range(..., "lines") BEFORE propose_patch or apply_snippet to get exact line numbers.
+- NEVER guess file contents or line numbers. Always verify with read_file_range first.
+- NEVER add [NNN] markers or "(empty line)" text in your tool call arguments. These are ONLY for you to read the file content in read_file responses. The actual file content does NOT include these markers.
+
+IMPORTANT: LINE NUMBERS AND EMPTY LINES ARE FOR REFERENCE ONLY
+- The [NNN] markers and "(empty line)" text are visual markers to help you READ the file
+- DO NOT include [NNN] in your diffs or proposed content - these are NOT part of the actual file
+- When you read: "[003] (empty line)" that means line 3 is blank. Keep it blank in your edit (empty line), not as the text "(empty line)"
+- When you read: "[005] Test = 20;" you use line number 5 for your diff. But only write "Test = 20;" (without the [005])
+- EXAMPLE WRONG: proposing "  [007] Test4 = 70;" - don't include the [007]
+- EXAMPLE RIGHT: proposing "  Test4 = 70;" - just the actual code
+- Use the [NNN] bracketed line numbers ONLY to know WHERE in the file to place your edits
+
+- Only use the tools listed above. Do NOT invent tools like "propose_patch_raw" or "edit_file_direct".
+- Prefer propose_patch for small edits. Use propose_edit for full file replacement.
 - Think before acting. Keep actions minimal and efficient.
 `.trim();
 
